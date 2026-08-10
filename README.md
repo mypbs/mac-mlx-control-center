@@ -29,7 +29,7 @@ Most local LLM runners are either overly complex, hog system menubars, or requir
 
 * 🚀 **1-Click Model Launching & Hot Swapping**: Instantly switch between MLX models without terminal commands.
 * 🌐 **Supercharged Hugging Face Search**: Search thousands of model weights directly with instant filter chips (`⚡ MLX Models`, `🎯 4-Bit Quantized`, `💻 Code Models`) and sorting (`Most Downloads`, `Most Liked`, `Recently Updated`).
-* 🤖 **AI-Powered Side-by-Side Model Comparison**: Select 2 to 4 models to generate an AI technical breakdown comparing quantization precision (`2bit-DQ`, `OptiQ-4bit`), RAM compatibility, and specialization.
+* 🤖 **Built-In AI Model Comparison Engine**: Select 2 to 4 models to generate an instant technical breakdown comparing quantization precision (`2bit-DQ`, `OptiQ-4bit`), RAM compatibility, and specialization — *works 100% locally out-of-the-box with zero API keys or accounts required!*
 * 🟢 **"Can I Run It?" Apple Silicon RAM Calculator**: Live color-coded RAM budget badges (`🟢 Fits Smoothly`, `🟡 High RAM Pressure`, `🔴 Swap Danger`) computed against your Mac's actual free memory.
 * 🤖 **Auto-Sync Pi Code & OpenCode Agents**: Automatically configures [Pi Code](https://github.com/) and [OpenCode](https://github.com/) under provider `MyMac` (`http://127.0.0.1:9999/v1`). Whenever you swap models in the GUI, your coding agents automatically route to the newly loaded model!
 * 📊 **Tokens/Second Speed Benchmark**: Measure generation speed (`tok/s`), execution time, token counts, and GPU memory usage on Apple Silicon.
@@ -44,7 +44,7 @@ Running local AI on your Mac has never been easier. You only need:
 2. **macOS** (12.0 or newer).
 3. **Python 3.10+** (pre-installed on macOS or available via Homebrew/Xcode).
 
-> *Note:* Dependencies like `mlx-lm` and `hf` CLI are automatically installed on-demand via `uvx`. You do not need to pre-install heavy ML environments!
+> *Note:* Dependencies like `mlx-lm` and `hf` CLI are automatically installed on-demand via `uvx`. You do not need to pre-install heavy ML environments! Zero API keys or account sign-ups are required.
 
 ---
 
@@ -85,6 +85,13 @@ When auto-sync is enabled in **`⚙️ API Settings`**, launching any model auto
 
 Provider Name: **`MyMac`**  
 Model ID: **`default_model`** (Auto-Detect Active MLX Endpoint)
+
+---
+
+## 🤖 Acknowledgements
+
+* **Google Antigravity AI**: Pair-programmed, engineered, and designed with Antigravity AI.
+* **Apple MLX Team**: Powered by Apple's open-source `mlx-lm` framework.
 
 ---
 
