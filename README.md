@@ -7,11 +7,11 @@ Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's hi
 
 ### Dashboard Screenshot
 <img width="3522" height="2344" alt="mlx1" src="https://github.com/user-attachments/assets/1a99830a-f565-41df-bc51-399e7f94e568" />
-### Search Models
+Search Models
 <img width="3522" height="2046" alt="mlx2" src="https://github.com/user-attachments/assets/a98012ea-dfbb-4111-8892-3ed57d534f92" />
-### Compare Models
+Compare Models
 <img width="2028" height="1098" alt="mlx3" src="https://github.com/user-attachments/assets/129e06b4-a381-47b6-a50c-bda2788fde16" />
-### Customize API for Local Coders like OpenCode or Pi Code
+Customize API for Local Coders like OpenCode or Pi Code
 <img width="1230" height="1512" alt="mlx4" src="https://github.com/user-attachments/assets/d0bf01ba-561b-4e90-adfb-52cff084c617" />
 
 
