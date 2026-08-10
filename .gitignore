@@ -1,0 +1,10 @@
+# MLX Local Control Center - Git Ignore Rules
+.mlx_logs/
+*.log
+*.pid
+__pycache__/
+.DS_Store
+*.pyc
+settings.json
+models/
+mlx_models/
