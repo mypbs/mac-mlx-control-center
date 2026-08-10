@@ -6,6 +6,23 @@ Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's hi
 
 ---
 
+## ⚡ 1-Click Launch Options (No Tech Experience Needed!)
+
+### Option A: Double-Click Launcher (Easiest)
+1. Download or clone this repository to your Mac.
+2. Double-click **`start.command`** in Finder.
+3. The server launches and automatically opens the dashboard in your default browser (`http://127.0.0.1:9998`)!
+
+---
+
+### Option B: 1-Line Terminal Instant Launcher
+Open Terminal and paste this single command:
+```bash
+curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/install.sh | bash
+```
+
+---
+
 ## 🌟 Why macOS MLX Control Center?
 
 Most local LLM runners are either overly complex, hog system menubars, or require manual hand-editing of configuration JSON files for coding tools. **macOS MLX Control Center** solves this with:
@@ -28,29 +45,6 @@ Running local AI on your Mac has never been easier. You only need:
 3. **Python 3.10+** (pre-installed on macOS or available via Homebrew/Xcode).
 
 > *Note:* Dependencies like `mlx-lm` and `hf` CLI are automatically installed on-demand via `uvx`. You do not need to pre-install heavy ML environments!
-
----
-
-## 🚀 Quick Start (1-Minute Setup)
-
-### 1. Clone the Repository
-```bash
-git clone https://github.com/mypbs/mac-mlx-control-center.git
-cd mac-mlx-control-center
-```
-
-### 2. Start the Web Control Center
-```bash
-python3 mlx_gui_server.py
-```
-
-### 3. Open the Dashboard in your Browser
-Navigate to:
-```text
-http://127.0.0.1:9998
-```
-
-That's it! You now have full control over your local Apple Silicon LLM server.
 
 ---
 
