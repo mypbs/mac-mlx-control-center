@@ -1,9 +1,10 @@
+
 # ⚡ macOS MLX Control Center
 
 > **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon M-Series processors.**
 
 Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's high-performance `mlx-lm` framework with a dark glassmorphic web dashboard and terminal interface. It turns any Mac powered by Apple Silicon M-Series processors into a local AI power-station with zero configuration hassle.
-
+<img width="3522" height="2344" alt="mlx1" src="https://github.com/user-attachments/assets/1a99830a-f565-41df-bc51-399e7f94e568" />
 ---
 
 ## ⚡ 1-Click Launch Options (No Tech Experience Needed!)
