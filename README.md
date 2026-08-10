@@ -1,8 +1,8 @@
 # ⚡ macOS MLX Control Center
 
-> **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon (M1/M2/M3/M4).**
+> **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon M-Series processors.**
 
-Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's high-performance `mlx-lm` framework with a dark glassmorphic web dashboard and terminal interface. It turns any MacBook into a local AI power-station with zero configuration hassle.
+Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's high-performance `mlx-lm` framework with a dark glassmorphic web dashboard and terminal interface. It turns any Mac powered by Apple Silicon M-Series processors into a local AI power-station with zero configuration hassle.
 
 ---
 
@@ -23,7 +23,7 @@ Most local LLM runners are either overly complex, hog system menubars, or requir
 ## 🛠️ Prerequisites
 
 Running local AI on your Mac has never been easier. You only need:
-1. **Any Apple Silicon Mac** (M1, M2, M3, M4 series chip with Unified Memory).
+1. **Any Mac with Apple Silicon M-Series Processors** (with Unified Memory).
 2. **macOS** (12.0 or newer).
 3. **Python 3.10+** (pre-installed on macOS or available via Homebrew/Xcode).
 
@@ -35,7 +35,7 @@ Running local AI on your Mac has never been easier. You only need:
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/mac-mlx-control-center.git
+git clone https://github.com/mypbs/mac-mlx-control-center.git
 cd mac-mlx-control-center
 ```
 
