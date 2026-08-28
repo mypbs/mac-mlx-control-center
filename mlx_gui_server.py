@@ -18,7 +18,9 @@ PID_DIR = os.path.expanduser("~/.mlx_pids")
 LOG_DIR = os.path.expanduser("~/.mlx_logs")
 MODEL_DIR = os.path.expanduser("~/mlx_models")
 
-sys.path.insert(0, PID_DIR)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, CURRENT_DIR)
+sys.path.insert(1, PID_DIR)
 import mlx_helper
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -126,6 +128,10 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
         elif path == "/api/models":
             models = mlx_helper.find_local_models()
             self.send_json({"models": models})
+        elif path == "/api/memory_processes":
+            stats = mlx_helper.get_system_stats()
+            procs = mlx_helper.get_top_memory_processes(limit=40)
+            self.send_json({"stats": stats, "processes": procs})
         elif path == "/api/repo_variants":
             raw_repo = query.get("repo_id", [""])[0]
             parsed = mlx_helper.parse_hf_identifier(raw_repo)
@@ -562,6 +568,10 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
 
             res = mlx_helper.run_model_benchmark(prompt, model, port=port, host=host)
             self.send_json(res)
+        elif path == "/api/kill_process":
+            pid = payload.get("pid")
+            res = mlx_helper.kill_process_by_pid(pid)
+            self.send_json(res)
         else:
             self.send_json({"error": "Not Found"}, 404)
 
@@ -570,7 +580,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>macOS MLX Control Center v0.2</title>
+  <title>macOS MLX Control Center v0.3</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -645,10 +655,99 @@ INDEX_HTML = """<!DOCTYPE html>
       padding: 16px 20px; margin-bottom: 20px; backdrop-filter: blur(8px);
     }
     .htop-item { display: flex; flex-direction: column; gap: 6px; }
+    .htop-item.htop-clickable {
+      cursor: pointer;
+      border-radius: 8px;
+      padding: 6px 8px;
+      margin: -6px -8px;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+    .htop-item.htop-clickable:hover {
+      background: rgba(99, 102, 241, 0.12);
+      transform: translateY(-1px);
+    }
+    .manage-ram-pill {
+      font-size: 10px;
+      font-weight: 700;
+      color: #818cf8;
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      border-radius: 12px;
+      padding: 2px 8px;
+      letter-spacing: 0.3px;
+      text-transform: none;
+      transition: all 0.2s ease;
+    }
+    .htop-item.htop-clickable:hover .manage-ram-pill {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
     .htop-label { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
     .htop-val { font-size: 18px; font-weight: 700; color: #fff; }
     .htop-progress { width: 100%; height: 8px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
     .htop-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #34d399); transition: width 0.3s ease; }
+
+    /* MEMORY MANAGER BREAKDOWN METER & PROCESS TABLE */
+    .mem-breakdown-bar {
+      display: flex;
+      width: 100%;
+      height: 14px;
+      border-radius: 7px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+      margin: 12px 0 16px 0;
+    }
+    .mem-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .mem-seg-app { background: #3b82f6; }
+    .mem-seg-wired { background: #f97316; }
+    .mem-seg-comp { background: #a855f7; }
+    .mem-seg-cache { background: #10b981; }
+
+    .proc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+    .proc-table th {
+      padding: 10px 14px;
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--card-border);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    .proc-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      vertical-align: middle;
+    }
+    .proc-table tr:hover td {
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .cat-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+    .cat-ai { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4); }
+    .cat-browser { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .cat-dev { background: rgba(59, 130, 246, 0.15); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); }
+    .cat-app { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .cat-system { background: rgba(156, 163, 175, 0.1); color: var(--text-muted); border: 1px solid rgba(156, 163, 175, 0.2); }
 
     nav { display: flex; gap: 8px; margin-bottom: 24px; background: rgba(21, 28, 44, 0.6); padding: 6px; border-radius: 10px; border: 1px solid var(--card-border); }
     .nav-btn {
@@ -661,14 +760,178 @@ INDEX_HTML = """<!DOCTYPE html>
     .tab-content { display: none; }
     .tab-content.active { display: block; }
     
+    /* VIEW MODE TOGGLE BUTTONS (CARDS / LIST) */
+    .view-toggle-group {
+      display: inline-flex;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .view-toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+    .view-toggle-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .view-toggle-btn.active {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 10px var(--accent-glow);
+    }
+
+    /* CARD STRUCTURE FOR BOTH MODES */
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
     .card {
       background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px;
-      padding: 20px; transition: transform 0.2s ease, border-color 0.2s ease; position: relative;
+      padding: 18px 20px; transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; position: relative;
     }
     .card:hover { border-color: rgba(99, 102, 241, 0.5); transform: translateY(-2px); }
-    .card-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; word-break: break-all; }
-    .card-meta { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
+    .card-title { font-size: 15px; font-weight: 600; word-break: break-all; color: #fff; }
+    .card-meta { font-size: 13px; color: var(--text-muted); }
+
+    /* CARD GRID MODE SPECIFIC STYLES */
+    .grid:not(.list-view) .card {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .grid:not(.list-view) .card-header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 8px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .grid:not(.list-view) .card-meta {
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .grid:not(.list-view) .path-meta {
+      font-size: 11px;
+      word-break: break-all;
+      color: var(--text-muted);
+      opacity: 0.8;
+      font-family: monospace;
+    }
+    .grid:not(.list-view) .card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .grid:not(.list-view) .card-actions .btn {
+      flex: 1;
+    }
+
+    /* LIST VIEW MODE (VERTICAL LIST WITH HORIZONTAL CARDS) */
+    .grid.list-view {
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 10px !important;
+    }
+    .grid.list-view .card {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      padding: 14px 20px !important;
+      gap: 16px !important;
+      border-radius: 10px !important;
+    }
+    .grid.list-view .card:hover {
+      border-color: rgba(99, 102, 241, 0.5);
+      background: rgba(25, 34, 54, 0.95);
+      transform: translateX(3px) !important;
+    }
+    .grid.list-view .card-main {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .grid.list-view .card-header-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 2px;
+    }
+    .grid.list-view .card-title {
+      font-size: 14px;
+      margin-bottom: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .grid.list-view .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      margin-bottom: 0;
+    }
+    .grid.list-view .path-meta {
+      max-width: 420px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+      opacity: 0.8;
+      font-family: monospace;
+    }
+    .grid.list-view .ram-badge {
+      margin-bottom: 0 !important;
+      padding: 2px 8px !important;
+      font-size: 11px !important;
+    }
+    .grid.list-view .card-actions {
+      display: flex !important;
+      align-items: center !important;
+      gap: 8px !important;
+      flex-shrink: 0 !important;
+      margin-top: 0 !important;
+    }
+    .grid.list-view .card-actions .btn {
+      padding: 8px 14px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .grid.list-view .card-actions .compare-label {
+      margin-right: 6px;
+    }
+
+    @media (max-width: 768px) {
+      .grid.list-view .card {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+      }
+      .grid.list-view .card-actions {
+        width: 100% !important;
+        justify-content: flex-start !important;
+        margin-top: 8px !important;
+      }
+    }
     
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 9px 16px;
@@ -758,7 +1021,7 @@ INDEX_HTML = """<!DOCTYPE html>
       <div>
         <div class="brand-title" style="display: flex; align-items: center; gap: 8px;">
           macOS MLX Control Center
-          <span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(99, 102, 241, 0.25); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); font-weight: 600; letter-spacing: 0.5px;">v0.2</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(99, 102, 241, 0.25); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); font-weight: 600; letter-spacing: 0.5px;">v0.3</span>
         </div>
         <div style="font-size: 12px; color: var(--text-muted);">Apple Silicon Local Model Manager</div>
       </div>
@@ -773,10 +1036,14 @@ INDEX_HTML = """<!DOCTYPE html>
 
   <!-- HTOP RESOURCE MONITOR BAR -->
   <div class="htop-bar">
-    <div class="htop-item">
-      <div class="htop-label">Mac System RAM</div>
+    <div class="htop-item htop-clickable" onclick="openMemoryModal()" title="Click to view memory breakdown and free RAM">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div class="htop-label">Mac System RAM</div>
+        <span class="manage-ram-pill">🔍 Manage RAM</span>
+      </div>
       <div class="htop-val" id="htopRamVal">-- / -- GB</div>
       <div class="htop-progress"><div class="htop-fill" id="htopRamFill" style="width: 0%;"></div></div>
+      <div style="font-size: 12px; color: var(--text-muted);" id="htopRamMeta">-- GB Available</div>
     </div>
     <div class="htop-item">
       <div class="htop-label">MLX Models Memory</div>
@@ -804,21 +1071,59 @@ INDEX_HTML = """<!DOCTYPE html>
 
   <!-- TAB 1: DASHBOARD -->
   <div id="tab-dashboard" class="tab-content active">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
       <h2 style="font-size: 18px; font-weight: 600;">Active MLX Model Servers</h2>
       <button class="btn btn-danger" onclick="killAllServers()">⚡ KILL SWITCH (Stop All)</button>
     </div>
     <div id="activeServerContainer" class="grid" style="margin-bottom: 24px;"></div>
 
-    <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 16px;">Launch a Model</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+      <h2 style="font-size: 18px; font-weight: 600;">Launch a Model</h2>
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <span style="font-size: 12px; color: var(--text-muted);">Sort:</span>
+        <select id="dashboardModelSortSelect" onchange="handleModelSortChange(this.value)" style="padding: 6px 12px !important; font-size: 12px !important;">
+          <option value="name-asc">🔤 Name (A → Z)</option>
+          <option value="name-desc">🔤 Name (Z → A)</option>
+          <option value="size-desc">📦 Size (Largest)</option>
+          <option value="size-asc">📦 Size (Smallest)</option>
+          <option value="date-desc">📅 Date Added (Newest)</option>
+          <option value="date-asc">📅 Date Added (Oldest)</option>
+        </select>
+        <div class="view-toggle-group">
+          <button class="view-toggle-btn active" data-view="grid" onclick="setViewMode('grid')" title="Card Grid View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg> Cards
+          </button>
+          <button class="view-toggle-btn" data-view="list" onclick="setViewMode('list')" title="Horizontal List View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h18v3H3V4zm0 7h18v3H3v-3zm0 7h18v3H3v-3z"/></svg> List
+          </button>
+        </div>
+      </div>
+    </div>
     <div id="fastSwapGrid" class="grid"></div>
   </div>
 
   <!-- TAB 2: DOWNLOADED MODELS -->
   <div id="tab-models" class="tab-content">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
       <h2 style="font-size: 18px; font-weight: 600;">Downloaded Models</h2>
-      <div style="display: flex; gap: 8px;">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <span style="font-size: 12px; color: var(--text-muted);">Sort:</span>
+        <select id="modelSortSelect" onchange="handleModelSortChange(this.value)" style="padding: 6px 12px !important; font-size: 12px !important;">
+          <option value="name-asc">🔤 Name (A → Z)</option>
+          <option value="name-desc">🔤 Name (Z → A)</option>
+          <option value="size-desc">📦 Size (Largest)</option>
+          <option value="size-asc">📦 Size (Smallest)</option>
+          <option value="date-desc">📅 Date Added (Newest)</option>
+          <option value="date-asc">📅 Date Added (Oldest)</option>
+        </select>
+        <div class="view-toggle-group">
+          <button class="view-toggle-btn active" data-view="grid" onclick="setViewMode('grid')" title="Card Grid View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg> Cards
+          </button>
+          <button class="view-toggle-btn" data-view="list" onclick="setViewMode('list')" title="Horizontal List View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h18v3H3V4zm0 7h18v3H3v-3zm0 7h18v3H3v-3z"/></svg> List
+          </button>
+        </div>
         <button class="btn btn-warning" onclick="clearCompareSelection()">🧹 Clear Checkmarks</button>
         <button class="btn btn-secondary" onclick="loadModels()">🔄 Refresh Models</button>
       </div>
@@ -841,7 +1146,7 @@ INDEX_HTML = """<!DOCTYPE html>
       <div class="chip" id="filter-code" onclick="setFilter('code')">💻 Code Models</div>
       <div class="chip" id="filter-all" onclick="setFilter('all')">🌐 All HF Repos</div>
       
-      <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
         <span style="font-size: 12px; color: var(--text-muted);">Sort By:</span>
         <select id="sortSelect" onchange="doSearch()" style="padding: 6px 12px !important; font-size: 12px !important;">
           <option value="downloads">Most Downloads</option>
@@ -852,6 +1157,14 @@ INDEX_HTML = """<!DOCTYPE html>
           <option value="50">50 Results</option>
           <option value="100">100 Results</option>
         </select>
+        <div class="view-toggle-group">
+          <button class="view-toggle-btn active" data-view="grid" onclick="setViewMode('grid')" title="Card Grid View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z"/></svg> Cards
+          </button>
+          <button class="view-toggle-btn" data-view="list" onclick="setViewMode('list')" title="Horizontal List View">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 4h18v3H3V4zm0 7h18v3H3v-3zm0 7h18v3H3v-3z"/></svg> List
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1055,6 +1368,92 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- MACOS MEMORY & PROCESS MANAGER MODAL -->
+  <div id="memoryModal" class="modal-overlay">
+    <div class="modal" style="max-width: 880px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div class="modal-header" style="margin-bottom: 0; display: flex; align-items: center; gap: 8px;">
+          <span>🧠 macOS Memory & Process Manager</span>
+        </div>
+        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="closeMemoryModal()">✕ Close</button>
+      </div>
+
+      <!-- RAM BREAKDOWN SECTION -->
+      <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <strong style="font-size: 14px; color: #fff;">Unified Memory Allocation</strong>
+          <span style="font-size: 13px; font-weight: 700; color: #60a5fa;" id="memModalTotalVal">-- / -- GB Used</span>
+        </div>
+
+        <div class="mem-breakdown-bar">
+          <div class="mem-segment mem-seg-app" id="memSegApp" style="width: 45%;" title="App Memory"></div>
+          <div class="mem-segment mem-seg-wired" id="memSegWired" style="width: 10%;" title="Wired Memory"></div>
+          <div class="mem-segment mem-seg-comp" id="memSegComp" style="width: 8%;" title="Compressed Memory"></div>
+          <div class="mem-segment mem-seg-cache" id="memSegCache" style="width: 37%;" title="Available & Cache"></div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; font-size: 12px;">
+          <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 8px 12px;">
+            <div style="color: #93c5fd; font-weight: 600;">📱 App Memory</div>
+            <div style="font-size: 16px; font-weight: 700; color: #fff;" id="memModalAppVal">-- GB</div>
+          </div>
+          <div style="background: rgba(249, 115, 22, 0.1); border: 1px solid rgba(249, 115, 22, 0.25); border-radius: 8px; padding: 8px 12px;">
+            <div style="color: #fdba74; font-weight: 600;">🔌 Wired Memory</div>
+            <div style="font-size: 16px; font-weight: 700; color: #fff;" id="memModalWiredVal">-- GB</div>
+          </div>
+          <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 8px 12px;">
+            <div style="color: #d8b4fe; font-weight: 600;">🗜️ Compressed</div>
+            <div style="font-size: 16px; font-weight: 700; color: #fff;" id="memModalCompVal">-- GB</div>
+          </div>
+          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px;">
+            <div style="color: #6ee7b7; font-weight: 600;">🟢 Available for MLX</div>
+            <div style="font-size: 16px; font-weight: 700; color: #34d399;" id="memModalAvailVal">-- GB</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROCESS SEARCH & FILTER CONTROLS -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="procFilterChips">
+          <div class="chip active" onclick="filterMemoryProcesses('all', this)">All Processes</div>
+          <div class="chip" onclick="filterMemoryProcesses('AI Model', this)">🤖 AI Models</div>
+          <div class="chip" onclick="filterMemoryProcesses('Browser', this)">🌐 Browsers</div>
+          <div class="chip" onclick="filterMemoryProcesses('Dev Tool', this)">🛠️ Dev Tools</div>
+          <div class="chip" onclick="filterMemoryProcesses('App', this)">💬 Apps</div>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center; margin-left: auto;">
+          <input type="text" id="procSearchInput" placeholder="Filter by name / PID..." style="padding: 6px 12px !important; font-size: 12px !important; width: 180px;" oninput="filterMemoryProcesses()">
+          <button class="btn btn-secondary" style="padding: 7px 12px; font-size: 12px;" onclick="loadMemoryProcesses()">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <!-- PROCESS TABLE CONTAINER -->
+      <div style="max-height: 380px; overflow-y: auto; border: 1px solid var(--card-border); border-radius: 10px; background: rgba(0,0,0,0.2);">
+        <table class="proc-table">
+          <thead>
+            <tr>
+              <th>Process / App</th>
+              <th>Category</th>
+              <th>PID</th>
+              <th>RAM Usage</th>
+              <th style="text-align: right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="procTableBody">
+            <tr>
+              <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Scanning active processes...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 16px; font-size: 12px; color: var(--text-muted);">
+        <span>💡 Terminating heavy background apps (e.g. browsers, background dev servers) frees memory for larger MLX models.</span>
+        <button class="btn btn-secondary" onclick="closeMemoryModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- LAUNCH MODAL WITH PRESET PROFILES -->
   <div id="launchModal" class="modal-overlay">
     <div class="modal" style="max-width: 560px;">
@@ -1133,6 +1532,204 @@ INDEX_HTML = """<!DOCTYPE html>
     let currentFreeRam = 16.0;
     let selectedForCompare = new Set();
     let globalConfig = { default_port: 9999, default_host: '127.0.0.1', default_temp: 0.0, default_max_tokens: 4096, auto_sync_agents: true };
+    let currentViewMode = localStorage.getItem('mlx_view_mode') || 'grid';
+
+    function setViewMode(mode) {
+      currentViewMode = mode;
+      localStorage.setItem('mlx_view_mode', mode);
+      applyViewMode();
+    }
+
+    function applyViewMode() {
+      const isList = currentViewMode === 'list';
+      const gridIds = ['activeServerContainer', 'fastSwapGrid', 'modelsGrid', 'searchResultsGrid'];
+      gridIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          if (isList) el.classList.add('list-view');
+          else el.classList.remove('list-view');
+        }
+      });
+
+      document.querySelectorAll('.view-toggle-btn').forEach(btn => {
+        if (btn.getAttribute('data-view') === currentViewMode) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+    }
+
+    let currentModelSort = localStorage.getItem('mlx_model_sort') || 'name-asc';
+    let cachedDownloadedModels = [];
+
+    function handleModelSortChange(sortVal) {
+      currentModelSort = sortVal;
+      localStorage.setItem('mlx_model_sort', sortVal);
+      syncSortDropdowns();
+      renderModelGrids();
+    }
+
+    function syncSortDropdowns() {
+      const d1 = document.getElementById('modelSortSelect');
+      const d2 = document.getElementById('dashboardModelSortSelect');
+      if (d1) d1.value = currentModelSort;
+      if (d2) d2.value = currentModelSort;
+    }
+
+    function sortModels(models, sortKey) {
+      const sorted = [...models];
+      switch (sortKey) {
+        case 'name-asc':
+          sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+          break;
+        case 'name-desc':
+          sorted.sort((a, b) => b.name.localeCompare(a.name, undefined, { sensitivity: 'base' }));
+          break;
+        case 'size-desc':
+          sorted.sort((a, b) => (b.size_gb || 0) - (a.size_gb || 0));
+          break;
+        case 'size-asc':
+          sorted.sort((a, b) => (a.size_gb || 0) - (b.size_gb || 0));
+          break;
+        case 'date-desc':
+          sorted.sort((a, b) => (b.created_ts || 0) - (a.created_ts || 0));
+          break;
+        case 'date-asc':
+          sorted.sort((a, b) => (a.created_ts || 0) - (b.created_ts || 0));
+          break;
+        default:
+          sorted.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+      }
+      return sorted;
+    }
+
+    let currentProcCategoryFilter = 'all';
+    let cachedMemoryProcesses = [];
+
+    function openMemoryModal() {
+      document.getElementById('memoryModal').classList.add('active');
+      loadMemoryProcesses();
+    }
+
+    function closeMemoryModal() {
+      document.getElementById('memoryModal').classList.remove('active');
+    }
+
+    async function loadMemoryProcesses() {
+      const tbody = document.getElementById('procTableBody');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Scanning active processes...</td></tr>';
+      
+      try {
+        const res = await fetch('/api/memory_processes');
+        const data = await res.json();
+        const stats = data.stats || {};
+        cachedMemoryProcesses = data.processes || [];
+
+        if (stats.total_ram_gb) {
+          document.getElementById('memModalTotalVal').innerText = `${stats.used_ram_gb} / ${stats.total_ram_gb} GB (${stats.ram_percent}%)`;
+          document.getElementById('memModalAppVal').innerText = `${stats.app_ram_gb || '--'} GB`;
+          document.getElementById('memModalWiredVal').innerText = `${stats.wired_ram_gb || '--'} GB`;
+          document.getElementById('memModalCompVal').innerText = `${stats.compressed_ram_gb || '--'} GB`;
+          document.getElementById('memModalAvailVal').innerText = `${stats.free_ram_gb || '--'} GB`;
+
+          const appPct = (stats.app_ram_gb / stats.total_ram_gb) * 100;
+          const wiredPct = (stats.wired_ram_gb / stats.total_ram_gb) * 100;
+          const compPct = (stats.compressed_ram_gb / stats.total_ram_gb) * 100;
+          const availPct = Math.max(0, 100 - appPct - wiredPct - compPct);
+
+          document.getElementById('memSegApp').style.width = `${appPct}%`;
+          document.getElementById('memSegWired').style.width = `${wiredPct}%`;
+          document.getElementById('memSegComp').style.width = `${compPct}%`;
+          document.getElementById('memSegCache').style.width = `${availPct}%`;
+        }
+
+        filterMemoryProcesses();
+      } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #f87171; padding: 24px;">Error loading processes: ${e}</td></tr>`;
+      }
+    }
+
+    function filterMemoryProcesses(category, chipEl) {
+      if (category !== undefined) {
+        currentProcCategoryFilter = category;
+        if (chipEl) {
+          document.querySelectorAll('#procFilterChips .chip').forEach(c => c.classList.remove('active'));
+          chipEl.classList.add('active');
+        }
+      }
+
+      const search = (document.getElementById('procSearchInput')?.value || '').toLowerCase().trim();
+      const tbody = document.getElementById('procTableBody');
+      if (!tbody) return;
+
+      const filtered = cachedMemoryProcesses.filter(p => {
+        const matchCat = currentProcCategoryFilter === 'all' || p.category === currentProcCategoryFilter;
+        const matchSearch = !search || p.name.toLowerCase().includes(search) || String(p.pid).includes(search) || (p.command && p.command.toLowerCase().includes(search));
+        return matchCat && matchSearch;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No matching processes found.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = '';
+      filtered.forEach(p => {
+        let catClass = 'cat-app';
+        if (p.category === 'AI Model') catClass = 'cat-ai';
+        else if (p.category === 'Browser') catClass = 'cat-browser';
+        else if (p.category === 'Dev Tool') catClass = 'cat-dev';
+        else if (p.category === 'macOS System') catClass = 'cat-system';
+
+        let actionBtn = '';
+        if (p.is_mlx) {
+          actionBtn = `<button class="btn btn-danger" style="padding: 5px 10px; font-size: 11px;" onclick="killProcess(${p.pid}, '${p.name.replace(/'/g, "\\'")}', true)">🛑 Stop Server</button>`;
+        } else if (p.is_system) {
+          actionBtn = `<button class="btn btn-secondary" style="padding: 5px 10px; font-size: 11px; opacity: 0.5; cursor: not-allowed;" disabled title="Protected macOS system process">🔒 Protected</button>`;
+        } else {
+          actionBtn = `<button class="btn btn-danger" style="padding: 5px 10px; font-size: 11px; background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #fca5a5;" onclick="killProcess(${p.pid}, '${p.name.replace(/'/g, "\\'")}', false)">❌ End Process</button>`;
+        }
+
+        tbody.innerHTML += `
+          <tr>
+            <td>
+              <strong style="color: #fff; font-size: 13px;">${p.name}</strong>
+              <div style="font-size: 11px; color: var(--text-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${p.command}">${p.command}</div>
+            </td>
+            <td><span class="cat-badge ${catClass}">${p.category}</span></td>
+            <td><code style="color: #94a3b8; font-size: 12px;">${p.pid}</code></td>
+            <td><strong style="color: #34d399;">${p.rss_str}</strong> <span style="font-size: 11px; color: var(--text-muted);">(${p.mem_pct}%)</span></td>
+            <td style="text-align: right;">${actionBtn}</td>
+          </tr>`;
+      });
+    }
+
+    async function killProcess(pid, name, isMlx) {
+      const msg = isMlx 
+        ? `Stop MLX Server for '${name}' (PID ${pid})?`
+        : `Terminate process '${name}' (PID ${pid}) to free memory?`;
+
+      if (!confirm(msg)) return;
+
+      try {
+        const res = await fetch('/api/kill_process', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pid: pid })
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+        } else {
+          await loadMemoryProcesses();
+          updateStatus();
+        }
+      } catch (e) {
+        alert('Failed to kill process: ' + e);
+      }
+    }
 
     function switchTab(tabId) {
       document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -1331,6 +1928,9 @@ INDEX_HTML = """<!DOCTYPE html>
         if (stats.total_ram_gb) {
           document.getElementById('htopRamVal').innerText = stats.used_ram_gb + ' / ' + stats.total_ram_gb + ' GB (' + stats.ram_percent + '%)';
           document.getElementById('htopRamFill').style.width = stats.ram_percent + '%';
+          if (document.getElementById('htopRamMeta')) {
+            document.getElementById('htopRamMeta').innerText = stats.free_ram_gb + ' GB Available (' + (stats.cached_ram_gb || 0) + ' GB Cache)';
+          }
           document.getElementById('htopMlxVal').innerText = stats.mlx_ram_gb + ' GB';
           document.getElementById('htopMlxMeta').innerText = stats.active_models + ' Active Model(s)';
           document.getElementById('htopCpuVal').innerText = stats.cpu_percent + '%';
@@ -1352,19 +1952,23 @@ INDEX_HTML = """<!DOCTYPE html>
             const isReady = s.status === 'READY';
             serverContainer.innerHTML += `
               <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                  <div class="card-title">${s.model}</div>
-                  <span class="status-pill ${isReady ? 'ready' : 'none'}">
-                    <span class="status-dot ${isReady ? '' : 'pulse'}"></span> ${s.status}
-                  </span>
+                <div class="card-main">
+                  <div class="card-header-row">
+                    <div class="card-title">${s.model}</div>
+                    <span class="status-pill ${isReady ? 'ready' : 'none'}">
+                      <span class="status-dot ${isReady ? '' : 'pulse'}"></span> ${s.status}
+                    </span>
+                  </div>
+                  <div class="card-meta">
+                    <span>Port: <strong style="color: #f3f4f6;">${s.port}</strong></span>
+                    <span>Host: <strong style="color: #f3f4f6;">${s.host}</strong></span>
+                    <span>PID: <strong style="color: #f3f4f6;">${s.pid}</strong></span>
+                    <span>Endpoint: <code style="color: #60a5fa;">http://${s.host}:${s.port}/v1</code></span>
+                  </div>
                 </div>
-                <div class="card-meta">
-                  Port: <strong>${s.port}</strong> | Host: <strong>${s.host}</strong> | PID: ${s.pid}<br>
-                  Endpoint: <code style="color: #60a5fa;">http://${s.host}:${s.port}/v1</code>
-                </div>
-                <div style="display: flex; gap: 8px; margin-top: 10px;">
-                  <button class="btn btn-danger" style="flex: 1;" onclick="stopServer('${s.pid}')">Stop Server</button>
-                  <button class="btn btn-secondary" onclick="switchTab('test'); loadTestServers();">Test API</button>
+                <div class="card-actions">
+                  <button class="btn btn-danger" onclick="stopServer('${s.pid}')">🛑 Stop Server</button>
+                  <button class="btn btn-secondary" onclick="switchTab('test'); loadTestServers();">🧪 Test API</button>
                 </div>
               </div>`;
           });
@@ -1373,9 +1977,10 @@ INDEX_HTML = """<!DOCTYPE html>
             <div class="status-pill none">
               <span class="status-dot"></span> 0 Active MLX Servers
             </div>`;
-          serverContainer.innerHTML = `<div class="card" style="grid-column: 1 / -1; text-align: center; color: var(--text-muted);">No model currently running. Click "Start Model" on any downloaded model below!</div>`;
+          serverContainer.innerHTML = `<div class="card" style="grid-column: 1 / -1; width: 100%; text-align: center; color: var(--text-muted); padding: 18px;">No model currently running. Click "Start Model" on any downloaded model below!</div>`;
         }
 
+        applyViewMode();
         loadTestServers();
       } catch (e) {
         console.error(e);
@@ -1425,65 +2030,92 @@ INDEX_HTML = """<!DOCTYPE html>
       }
     }
 
+    function renderModelGrids() {
+      const fastSwapGrid = document.getElementById('fastSwapGrid');
+      const modelsGrid = document.getElementById('modelsGrid');
+      if (!fastSwapGrid || !modelsGrid) return;
+
+      fastSwapGrid.innerHTML = '';
+      modelsGrid.innerHTML = '';
+
+      if (cachedDownloadedModels.length === 0) {
+        const emptyHtml = `<div class="card" style="grid-column: 1 / -1; width: 100%; text-align: center; color: var(--text-muted); padding: 24px;">No models downloaded yet. Use the "Search Hugging Face" tab to download models!</div>`;
+        fastSwapGrid.innerHTML = emptyHtml;
+        modelsGrid.innerHTML = emptyHtml;
+        applyViewMode();
+        return;
+      }
+
+      const models = sortModels(cachedDownloadedModels, currentModelSort);
+
+      models.forEach(m => {
+        const isRunning = activeServers.some(s => s.model === m.name);
+        const runningServer = activeServers.find(s => s.model === m.name);
+
+        let badgeColor = m.supported ? '#6366f1' : '#f59e0b';
+        const tagBadge = m.arch_tag ? `<span style="font-size:11px; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.08); color: ${badgeColor}; margin-left: 6px;">${m.arch_tag}</span>` : '';
+        const ramBadge = getRamBadge(m.size_gb || 6.0, currentFreeRam);
+        const isChecked = selectedForCompare.has(m.name) ? 'checked' : '';
+        const hfUrl = m.base_name ? `https://huggingface.co/${m.base_name}${m.subfolder ? '/tree/main/' + m.subfolder : ''}` : `https://huggingface.co/${m.name}`;
+
+        const fastSwapCard = `
+          <div class="card">
+            <div class="card-main">
+              <div class="card-header-row">
+                <div class="card-title">${m.name} ${tagBadge}</div>
+                ${ramBadge}
+                <label class="compare-label" style="font-size: 11px; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
+                  <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
+                </label>
+              </div>
+              <div class="card-meta">
+                <span>📦 Size: <strong style="color: #f3f4f6;">${m.size}</strong></span>
+                ${m.date_added ? `<span>📅 Added: <strong style="color: #f3f4f6;">${m.date_added}</strong></span>` : ''}
+              </div>
+            </div>
+            <div class="card-actions">
+              <button class="btn ${isRunning ? 'btn-secondary' : 'btn-primary'}" onclick="openLaunchModal('${m.name}')">
+                ${isRunning ? `✓ Active on Port ${runningServer.port}` : '🚀 Start Model'}
+              </button>
+              <a href="${hfUrl}" target="_blank" class="btn btn-secondary" style="padding: 9px 12px; font-size: 12px;">🔗 HF Page</a>
+            </div>
+          </div>`;
+        fastSwapGrid.innerHTML += fastSwapCard;
+
+        const modelCard = `
+          <div class="card">
+            <div class="card-main">
+              <div class="card-header-row">
+                <div class="card-title">${m.name} ${tagBadge}</div>
+                ${ramBadge}
+                <label class="compare-label" style="font-size: 11px; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
+                  <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
+                </label>
+              </div>
+              <div class="card-meta">
+                <span>📦 Size: <strong style="color: #f3f4f6;">${m.size}</strong></span>
+                ${m.date_added ? `<span>📅 Added: <strong style="color: #f3f4f6;">${m.date_added}</strong></span>` : ''}
+                <span class="path-meta" title="${m.path}">📁 <span style="opacity: 0.85;">${m.path}</span></span>
+              </div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-primary" onclick="openLaunchModal('${m.name}')">🚀 Start Model</button>
+              <a href="${hfUrl}" target="_blank" class="btn btn-secondary" style="padding: 9px 12px; font-size: 12px;">🔗 HF Page</a>
+              <button class="btn btn-danger" onclick="deleteModel('${m.delete_target}')">🗑️ Delete</button>
+            </div>
+          </div>`;
+        modelsGrid.innerHTML += modelCard;
+      });
+      applyViewMode();
+    }
+
     async function loadModels() {
       try {
         const res = await fetch('/api/models');
         const data = await res.json();
-        const models = data.models || [];
-        
-        const fastSwapGrid = document.getElementById('fastSwapGrid');
-        const modelsGrid = document.getElementById('modelsGrid');
-        
-        fastSwapGrid.innerHTML = '';
-        modelsGrid.innerHTML = '';
-
-        models.forEach(m => {
-          const isRunning = activeServers.some(s => s.model === m.name);
-          const runningServer = activeServers.find(s => s.model === m.name);
-
-          let badgeColor = m.supported ? '#6366f1' : '#f59e0b';
-          const tagBadge = m.arch_tag ? `<span style="font-size:11px; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.08); color: ${badgeColor}; margin-left: 6px;">${m.arch_tag}</span>` : '';
-          const ramBadge = getRamBadge(m.size_gb || 6.0, currentFreeRam);
-          const isChecked = selectedForCompare.has(m.name) ? 'checked' : '';
-          const hfUrl = m.base_name ? `https://huggingface.co/${m.base_name}${m.subfolder ? '/tree/main/' + m.subfolder : ''}` : `https://huggingface.co/${m.name}`;
-
-          const fastSwapCard = `
-            <div class="card">
-              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div class="card-title">${m.name} ${tagBadge}</div>
-                <label style="font-size: 11px; cursor: pointer; color: var(--text-muted);">
-                  <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
-                </label>
-              </div>
-              <div class="card-meta">Size: ${m.size}</div>
-              ${ramBadge}
-              <div style="display: flex; gap: 8px; margin-top: 10px;">
-                <button class="btn ${isRunning ? 'btn-secondary' : 'btn-primary'}" style="flex: 1;" onclick="openLaunchModal('${m.name}')">
-                  ${isRunning ? `✓ Active on Port ${runningServer.port}` : '🚀 Start Model'}
-                </button>
-                <a href="${hfUrl}" target="_blank" class="btn btn-secondary" style="padding: 9px 12px; font-size: 12px;">🔗 HF Page</a>
-              </div>
-            </div>`;
-          fastSwapGrid.innerHTML += fastSwapCard;
-
-          const modelCard = `
-            <div class="card">
-              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div class="card-title">${m.name} ${tagBadge}</div>
-                <label style="font-size: 11px; cursor: pointer; color: var(--text-muted);">
-                  <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
-                </label>
-              </div>
-              <div class="card-meta">Size: ${m.size}<br><span style="font-size: 11px;">Path: ${m.path}</span></div>
-              ${ramBadge}
-              <div style="display: flex; gap: 8px; margin-top: 12px;">
-                <button class="btn btn-primary" onclick="openLaunchModal('${m.name}')">Start Model</button>
-                <a href="${hfUrl}" target="_blank" class="btn btn-secondary" style="padding: 9px 12px; font-size: 12px;">🔗 HF Page</a>
-                <button class="btn btn-danger" onclick="deleteModel('${m.delete_target}')">Delete</button>
-              </div>
-            </div>`;
-          modelsGrid.innerHTML += modelCard;
-        });
+        cachedDownloadedModels = data.models || [];
+        syncSortDropdowns();
+        renderModelGrids();
       } catch (e) {
         console.error(e);
       }
@@ -1575,24 +2207,28 @@ INDEX_HTML = """<!DOCTYPE html>
 
         resultsGrid.innerHTML += `
           <div class="card">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-              <div class="card-title">${r.id}</div>
-              <label style="font-size: 11px; cursor: pointer; color: var(--text-muted);">
-                <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${r.id}')"> Compare
-              </label>
+            <div class="card-main">
+              <div class="card-header-row">
+                <div class="card-title">${r.id}</div>
+                ${ramBadge}
+                <label class="compare-label" style="font-size: 11px; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
+                  <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${r.id}')"> Compare
+                </label>
+              </div>
+              <div class="card-meta">
+                <span>⬇️ <strong style="color: #f3f4f6;">${r.downloads.toLocaleString()}</strong></span>
+                <span>❤️ <strong style="color: #f3f4f6;">${r.likes}</strong></span>
+                <span>🕒 <strong style="color: #f3f4f6;">${r.lastModified || 'Recent'}</strong></span>
+                <div style="display: inline-flex; flex-wrap: wrap; gap: 4px;">${tagsHtml}</div>
+              </div>
             </div>
-            <div class="card-meta">
-              Downloads: <strong>${r.downloads.toLocaleString()}</strong> | Likes: <strong>${r.likes}</strong><br>
-              Updated: ${r.lastModified || 'Recent'}<br>
-              <div style="margin-top: 6px;">${tagsHtml}</div>
-            </div>
-            ${ramBadge}
-            <div style="display: flex; gap: 8px; margin-top: 10px;">
-              <button class="btn btn-primary" style="flex: 1;" onclick="downloadRepo('${r.id}')">⚡ Download</button>
+            <div class="card-actions">
+              <button class="btn btn-primary" onclick="downloadRepo('${r.id}')">⚡ Download</button>
               <a href="${hfUrl}" target="_blank" class="btn btn-secondary" style="padding: 9px 12px; font-size: 12px;">🔗 HF Page</a>
             </div>
           </div>`;
       });
+      applyViewMode();
     }
 
     function applyPreset(type) {
@@ -1910,6 +2546,8 @@ INDEX_HTML = """<!DOCTYPE html>
       }
     }
 
+    applyViewMode();
+    syncSortDropdowns();
     setInterval(updateStatus, 3000);
     updateStatus();
     loadModels();

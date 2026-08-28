@@ -1,5 +1,5 @@
 
-# ⚡ macOS MLX Control Center `v0.2`
+# ⚡ macOS MLX Control Center `v0.3`
 
 > **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon M-Series processors.**
 
@@ -19,14 +19,7 @@ Customize API for Local Coders like OpenCode or Pi Code
 
 ## ⚡ 1-Click Launch Options (No Tech Experience Needed!)
 
-### Option A: Double-Click Launcher (Easiest)
-1. Download or clone this repository to your Mac.
-2. Double-click **`start.command`** in Finder.
-3. The server launches and automatically opens the dashboard in your default browser (`http://127.0.0.1:9998`)!
-
----
-
-### Option B: 1-Line Terminal Instant Launcher
+### Option A: 1-Line Terminal Instant Launcher (Recommended)
 Open Terminal and paste this single command:
 ```bash
 curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/install.sh | bash
@@ -34,15 +27,26 @@ curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/in
 
 ---
 
+### Option B: Double-Click Launcher
+1. Download or clone this repository to your Mac.
+2. Double-click **`start.command`** in Finder.
+3. The server launches and automatically opens the dashboard in your default browser (`http://127.0.0.1:9998`)!
+
+---
+
 ## 🌟 Why macOS MLX Control Center?
 
 Most local LLM runners are either overly complex, hog system menubars, or require manual hand-editing of configuration JSON files for coding tools. **macOS MLX Control Center** solves this with:
 
+* 🧠 **macOS Memory & Process Manager (v0.3)**: Real-time visual breakdown of Apple Silicon Unified Memory (App, Wired, Compressed, Available Cache) with an interactive top process scanner (`🔍 Manage RAM`) and 1-click process termination to free up memory for larger models.
+* 🔤 **Model Sorting & Date Added (v0.3)**: Sort local and downloaded models by Name (A-Z / Z-A), Size (Largest / Smallest), and Date Added (Newest / Oldest) with exact timestamps on all model cards.
+* 📱 **Horizontal List Mode vs. Card Mode (v0.3)**: Toggle seamlessly between sleek horizontal list rows and spacious square card grid views across all model and search views.
+* 🟢 **Activity Monitor-Aligned RAM Accounting (v0.3)**: Accurate unified memory metrics matching Activity Monitor, `htop`, and `mactop`.
 * 🚀 **1-Click Model Launching & Hot Swapping**: Instantly switch between MLX models without terminal commands.
-* 📦 **Multi-Quant & Subfolder HF Support (v0.2)**: Direct support for repositories with multiple quantizations (e.g. `orcarouter/Qwen3.8-27B-Uncensored-MLX/tree/main/4-bit`). Pick exact bit precision (`2-bit`, `4-bit`, `6-bit`, `8-bit`) and download only the weights you need instead of 80+ GB!
+* 📦 **Multi-Quant & Subfolder HF Support**: Direct support for repositories with multiple quantizations (e.g. `orcarouter/Qwen3.8-27B-Uncensored-MLX/tree/main/4-bit`). Pick exact bit precision (`2-bit`, `4-bit`, `6-bit`, `8-bit`) and download only the weights you need instead of 80+ GB!
 * 🌐 **Supercharged Hugging Face Search**: Search thousands of model weights directly with instant filter chips (`⚡ MLX Models`, `🎯 4-Bit Quantized`, `💻 Code Models`) and sorting (`Most Downloads`, `Most Liked`, `Recently Updated`).
 * 🤖 **Built-In AI Model Comparison Engine**: Select 2 to 4 models to generate an instant technical breakdown comparing quantization precision (`2bit-DQ`, `OptiQ-4bit`), RAM compatibility, and specialization — *works 100% locally out-of-the-box with zero API keys or accounts required!*
-* 🟢 **"Can I Run It?" Apple Silicon RAM Calculator**: Live color-coded RAM budget badges (`🟢 Fits Smoothly`, `🟡 High RAM Pressure`, `🔴 Swap Danger`) computed against your Mac's actual free memory.
+* 🟢 **"Can I Run It?" Apple Silicon RAM Calculator**: Live color-coded RAM budget badges (`🟢 Fits Smoothly`, `🟡 High RAM Pressure`, `🔴 Swap Danger`) computed against your Mac's actual available memory.
 * 🤖 **Auto-Sync Pi Code & OpenCode Agents**: Automatically configures [Pi Code](https://github.com/) and [OpenCode](https://github.com/) under provider `MyMac` (`http://127.0.0.1:9999/v1`). Whenever you swap models in the GUI, your coding agents automatically route to the newly loaded model!
 * 📊 **Tokens/Second Speed Benchmark**: Measure generation speed (`tok/s`), execution time, token counts, and GPU memory usage on Apple Silicon.
 * ⚙️ **Custom API Settings**: Change default ports (`9999`, `8888`, `8080`), host binding (`127.0.0.1` or `0.0.0.0` for LAN access across home Wi-Fi), and max output token budgets with built-in memory guidelines.
