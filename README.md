@@ -96,6 +96,77 @@ In the **`⚙️ API Settings`** panel, you can configure your **Max Output Toke
 
 ---
 
+---
+
+## 💬 Integrating with LibreChat (Local ChatGPT Web UI with Vision)
+
+The combo of **macOS MLX Control Center** and **[LibreChat](https://github.com/danny-avila/LibreChat)** gives you a completely private, self-hosted ChatGPT-like experience with full multimodal vision support on your Mac.
+
+### 🌟 Key Benefits:
+* 🔒 **100% Local & Private**: No data leaves your Mac; runs entirely on Apple Silicon GPU & Unified Memory.
+* 👁️ **Full Multimodal Vision**: Attach screenshots, PDFs, documents, diagrams, and photos in LibreChat for instant analysis with models like Gemma 4 and Qwen 2.5/3.8 VL.
+* ⚡ **Hot-Swapping**: Switch models in MLX Control Center with 1 click; LibreChat dynamically routes to the active model via `default_model` without restarting containers.
+* 💰 **Zero Cost**: No OpenAI/Anthropic API subscriptions needed.
+
+### 🛠️ Setup Guide:
+
+#### 1. Configure `librechat.yaml`
+Add the custom MLX endpoint to your `librechat.yaml` file:
+
+```yaml
+version: 1.2.0
+
+endpoints:
+  custom:
+    - name: "MacBook MLX"
+      apiKey: "local"
+      baseURL: "http://host.docker.internal:9999/v1" # Use http://127.0.0.1:9999/v1 if running LibreChat natively without Docker
+      models:
+        default:
+          - "default_model"
+          - "mlx-community/gemma-4-e4b-it-OptiQ-4bit"
+          - "lmstudio-community/Qwen3.8-27B-MLX-4bit"
+          - "mlx-community/Llama-3.2-3B-Instruct-4bit"
+        fetch: true
+      titleConvo: true
+      modelDisplayLabel: "MacBook MLX"
+```
+
+> **Note for Docker users:** `host.docker.internal` allows Docker containers on macOS to seamlessly communicate with the MLX server running directly on macOS.
+
+#### 2. Restart LibreChat
+If running via Docker:
+```bash
+docker compose restart
+```
+
+#### 3. Chat & Analyze Images
+1. Open LibreChat (e.g. `http://localhost:3080` or `http://localhost:3081`).
+2. Select **`MacBook MLX`** from the model dropdown.
+3. Drag & drop images directly into the chat to perform OCR, code transcription, and visual reasoning!
+
+---
+
+## 🤖 Agentic AI Pairing Instructions (Antigravity, ChatGPT, Claude, Cursor & Codex)
+
+You can use an AI coding assistant (like **Google Antigravity**, **ChatGPT / Codex**, **Claude Code**, or **Cursor**) to completely automate managing, launching, and integrating this system on your Mac.
+
+Here are ready-to-use prompt templates you can copy and paste into your AI assistant:
+
+### 📋 Prompt 1: 1-Click Setup & Launcher
+> *"I want to run local AI models on my Apple Silicon Mac using macOS MLX Control Center. Please run `curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/install.sh | bash` to set up the repository, start the GUI dashboard on port 9998, and verify that the server is responding."*
+
+### 📋 Prompt 2: Auto-Configure LibreChat with MLX Vision
+> *"Please configure my local LibreChat setup to connect to my MLX Control Center. Update `librechat.yaml` with a custom endpoint named 'MacBook MLX' pointing to `http://host.docker.internal:9999/v1` with `fetch: true` and models list containing `default_model` and `mlx-community/gemma-4-e4b-it-OptiQ-4bit`. Then restart the LibreChat docker container and confirm health."*
+
+### 📋 Prompt 3: Auto-Configure Coding Agents (Pi Code / OpenCode / Cline)
+> *"Please configure my local coding agent (Pi Code / OpenCode) to use my local MLX server as the default provider under the name 'MyMac' at `http://127.0.0.1:9999/v1` with model ID `default_model` and reasoning tokens enabled."*
+
+### 📋 Prompt 4: Diagnostic & Vision Troubleshooting
+> *"Check the status of my MLX server on port 9999 and GUI on port 9998 using `curl http://127.0.0.1:9998/api/status`. If I'm using a vision model (like Gemma 4), verify that it is running via `mlx-vlm` so image uploads work in LibreChat."*
+
+---
+
 ## 🤝 Agent Integration (Pi Code & OpenCode)
 
 When auto-sync is enabled in **`⚙️ API Settings`**, launching any model automatically updates your local coding agent configs:
@@ -111,7 +182,7 @@ Model ID: **`default_model`** (Auto-Detect Active MLX Endpoint)
 ## 🤖 Acknowledgements
 
 * **Google Antigravity AI**: Pair-programmed, engineered, and designed with Antigravity AI.
-* **Apple MLX Team**: Powered by Apple's open-source `mlx-lm` framework.
+* **Apple MLX Team**: Powered by Apple's open-source `mlx-lm` & `mlx-vlm` frameworks.
 
 ---
 
