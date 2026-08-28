@@ -126,6 +126,11 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
         elif path == "/api/models":
             models = mlx_helper.find_local_models()
             self.send_json({"models": models})
+        elif path == "/api/repo_variants":
+            raw_repo = query.get("repo_id", [""])[0]
+            parsed = mlx_helper.parse_hf_identifier(raw_repo)
+            variants = mlx_helper.get_repo_quant_variants(parsed["repo_id"])
+            self.send_json({"repo_id": parsed["repo_id"], "variants": variants})
         elif path == "/api/search":
             q = query.get("q", ["mlx"])[0]
             limit = int(query.get("limit", ["50"])[0])
@@ -232,7 +237,7 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
             local_models = mlx_helper.find_local_models()
             model_path = model_name
             for m in local_models:
-                if m["name"] == model_name or model_name in m["path"]:
+                if m["name"] == model_name or m.get("base_name") == model_name or model_name in m["path"]:
                     model_path = m["path"]
                     break
 
@@ -349,7 +354,13 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
 
         elif path == "/api/pause_download":
             pid = payload.get("pid")
-            repo_id = payload.get("repo_id")
+            raw_repo = payload.get("repo_id", "")
+            explicit_subfolder = payload.get("subfolder", "")
+            parsed = mlx_helper.parse_hf_identifier(raw_repo, explicit_subfolder)
+            repo_id = parsed["repo_id"]
+            subfolder = parsed["subfolder"]
+            download_id = parsed["download_id"]
+
             if pid:
                 try:
                     os.kill(int(pid), 9)
@@ -361,15 +372,25 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                     org, repo = repo_id.split("/", 1)
                     cache_dir = os.path.expanduser(f"~/.cache/huggingface/hub/models--{org}--{repo}")
                 paused = mlx_helper.load_paused_downloads()
-                paused[repo_id] = {"cache_dir": cache_dir, "paused_at": os.path.getmtime(cache_dir) if os.path.exists(cache_dir) else 0}
+                paused[download_id] = {
+                    "repo_id": repo_id,
+                    "subfolder": subfolder,
+                    "cache_dir": cache_dir,
+                    "paused_at": os.path.getmtime(cache_dir) if os.path.exists(cache_dir) else 0
+                }
                 mlx_helper.save_paused_downloads(paused)
-                self.send_json({"status": "paused", "repo_id": repo_id})
+                self.send_json({"status": "paused", "repo_id": repo_id, "subfolder": subfolder, "download_id": download_id})
             else:
                 self.send_json({"error": "No repo_id provided"}, 400)
 
         elif path == "/api/cancel_download":
             pid = payload.get("pid")
-            repo_id = payload.get("repo_id")
+            raw_repo = payload.get("repo_id", "")
+            explicit_subfolder = payload.get("subfolder", "")
+            parsed = mlx_helper.parse_hf_identifier(raw_repo, explicit_subfolder)
+            repo_id = parsed["repo_id"]
+            download_id = parsed["download_id"]
+
             if pid:
                 try:
                     os.kill(int(pid), 9)
@@ -377,22 +398,36 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                     pass
             if repo_id:
                 paused = mlx_helper.load_paused_downloads()
-                if repo_id in paused:
+                if download_id in paused:
+                    del paused[download_id]
+                    mlx_helper.save_paused_downloads(paused)
+                elif repo_id in paused:
                     del paused[repo_id]
                     mlx_helper.save_paused_downloads(paused)
-            self.send_json({"status": "ok", "cancelled": repo_id or pid})
+            self.send_json({"status": "ok", "cancelled": download_id or pid})
 
         elif path == "/api/restart_download" or path == "/api/resume_download":
             pid = payload.get("pid")
-            repo_id = payload.get("repo_id")
+            raw_repo = payload.get("repo_id", "")
+            explicit_subfolder = payload.get("subfolder", "")
             if pid:
                 try:
                     os.kill(int(pid), 9)
                 except Exception:
                     pass
-            if repo_id:
+            if raw_repo:
+                parsed = mlx_helper.parse_hf_identifier(raw_repo, explicit_subfolder)
+                repo_id = parsed["repo_id"]
+                subfolder = parsed["subfolder"]
+                revision = parsed["revision"]
+                download_id = parsed["download_id"]
+                display_name = parsed["display_name"]
+
                 paused = mlx_helper.load_paused_downloads()
-                if repo_id in paused:
+                if download_id in paused:
+                    del paused[download_id]
+                    mlx_helper.save_paused_downloads(paused)
+                elif repo_id in paused:
                     del paused[repo_id]
                     mlx_helper.save_paused_downloads(paused)
 
@@ -401,9 +436,22 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                 env["PYTHONUNBUFFERED"] = "1"
                 env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
                 env["HF_XET_HIGH_PERFORMANCE"] = "1"
+
                 cmd = ["hf", "download", repo_id]
+                if subfolder:
+                    cmd.extend(["--include", f"{subfolder}/*"])
+                if revision and revision != "main":
+                    cmd.extend(["--revision", revision])
+
                 proc = subprocess.Popen(cmd, env=env)
-                self.send_json({"status": "resumed", "repo_id": repo_id, "new_pid": proc.pid})
+                self.send_json({
+                    "status": "resumed",
+                    "repo_id": repo_id,
+                    "subfolder": subfolder,
+                    "download_id": download_id,
+                    "display_name": display_name,
+                    "new_pid": proc.pid
+                })
             else:
                 self.send_json({"error": "No repo_id provided"}, 400)
 
@@ -416,13 +464,24 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": "Target path not found"}, 400)
 
         elif path == "/api/download":
-            repo_id = payload.get("repo_id")
-            if not repo_id:
+            raw_repo = payload.get("repo_id", "")
+            explicit_subfolder = payload.get("subfolder", "")
+            if not raw_repo:
                 self.send_json({"error": "No repo_id specified"}, 400)
                 return
 
+            parsed = mlx_helper.parse_hf_identifier(raw_repo, explicit_subfolder)
+            repo_id = parsed["repo_id"]
+            subfolder = parsed["subfolder"]
+            revision = parsed["revision"]
+            download_id = parsed["download_id"]
+            display_name = parsed["display_name"]
+
             paused = mlx_helper.load_paused_downloads()
-            if repo_id in paused:
+            if download_id in paused:
+                del paused[download_id]
+                mlx_helper.save_paused_downloads(paused)
+            elif repo_id in paused:
                 del paused[repo_id]
                 mlx_helper.save_paused_downloads(paused)
 
@@ -433,8 +492,20 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
             env["HF_XET_HIGH_PERFORMANCE"] = "1"
 
             cmd = ["hf", "download", repo_id]
+            if subfolder:
+                cmd.extend(["--include", f"{subfolder}/*"])
+            if revision and revision != "main":
+                cmd.extend(["--revision", revision])
+
             proc = subprocess.Popen(cmd, env=env)
-            self.send_json({"status": "started", "repo_id": repo_id, "pid": proc.pid})
+            self.send_json({
+                "status": "started",
+                "repo_id": repo_id,
+                "subfolder": subfolder,
+                "download_id": download_id,
+                "display_name": display_name,
+                "pid": proc.pid
+            })
 
         elif path == "/api/compare_models":
             repos = payload.get("repos", [])
@@ -499,7 +570,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>macOS MLX Control Center</title>
+  <title>macOS MLX Control Center v0.2</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -685,7 +756,10 @@ INDEX_HTML = """<!DOCTYPE html>
     <div class="brand">
       <div class="brand-icon">⚡</div>
       <div>
-        <div class="brand-title">macOS MLX Control Center</div>
+        <div class="brand-title" style="display: flex; align-items: center; gap: 8px;">
+          macOS MLX Control Center
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(99, 102, 241, 0.25); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); font-weight: 600; letter-spacing: 0.5px;">v0.2</span>
+        </div>
         <div style="font-size: 12px; color: var(--text-muted);">Apple Silicon Local Model Manager</div>
       </div>
     </div>
@@ -871,6 +945,22 @@ INDEX_HTML = """<!DOCTYPE html>
     </div>
     <button class="btn btn-primary" style="padding: 8px 18px; font-size: 13px;" onclick="runAiComparison()">🤖 Compare Selected Models with AI</button>
     <button class="btn btn-secondary" style="padding: 8px 14px; font-size: 12px;" onclick="clearCompareSelection()">🧹 Clear Checkmarks</button>
+  </div>
+
+  <!-- QUANTIZATION SELECTION MODAL FOR MULTI-QUANT REPOSITORIES -->
+  <div id="quantModal" class="modal-overlay">
+    <div class="modal" style="max-width: 600px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+        <div class="modal-header" style="margin-bottom: 0;">⚡ Select Quantization / Bit Precision</div>
+        <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick="closeQuantModal()">✕ Close</button>
+      </div>
+      <div id="quantModalSubtitle" style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5;"></div>
+      <div id="quantModalVariants" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; max-height: 380px; overflow-y: auto;"></div>
+      <div style="display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--card-border); padding-top: 14px;">
+        <button class="btn btn-secondary" onclick="closeQuantModal()">Cancel</button>
+        <button class="btn btn-warning" id="quantDownloadAllBtn">Download Full Repo (All Quantizations)</button>
+      </div>
+    </div>
   </div>
 
   <!-- AI MODEL COMPARISON MATRIX MODAL -->
@@ -1190,10 +1280,7 @@ INDEX_HTML = """<!DOCTYPE html>
         activeServers = data.servers || [];
         activeDownloads = data.downloads || [];
         globalConfig = data.config || globalConfig;
-        const stats = data.stats || {};
         
-        if (stats.free_ram_gb) currentFreeRam = stats.free_ram_gb;
-
         // Render Rich Download Progress Tracker Banner with Pause / Resume / Kick / Cancel Controls
         const dlBanner = document.getElementById('liveDownloadBanner');
         if (activeDownloads.length > 0) {
@@ -1201,6 +1288,8 @@ INDEX_HTML = """<!DOCTYPE html>
           dlBanner.innerHTML = '';
           activeDownloads.forEach(d => {
             const isPaused = d.status === 'PAUSED';
+            const displayName = d.display_name || d.repo_id;
+            const subfolder = d.subfolder || '';
             dlBanner.innerHTML += `
               <div class="card" style="border-color: ${isPaused ? '#f59e0b' : '#6366f1'}; background: ${isPaused ? 'rgba(245, 158, 11, 0.1)' : 'rgba(99, 102, 241, 0.12)'};">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
@@ -1209,7 +1298,7 @@ INDEX_HTML = """<!DOCTYPE html>
                       <span class="status-pill ${isPaused ? 'paused' : 'downloading'}">
                         <span class="status-dot ${isPaused ? '' : 'pulse'}"></span> ${isPaused ? '⏸️ DOWNLOAD PAUSED (SAVED)' : '⚡ RUST ACCELERATED HF DOWNLOAD'}
                       </span>
-                      <strong style="font-size: 15px; color: #fff;">${d.repo_id}</strong>
+                      <strong style="font-size: 15px; color: #fff;">${displayName}</strong>
                     </div>
                     <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;">
                       ${isPaused ? 'Saved on Disk' : 'PID: ' + d.pid} | Downloaded: <strong style="color: #34d399;">${d.downloaded_size}</strong> of <strong>${d.total_size}</strong> (<strong style="color: #93c5fd;">${d.percent}%</strong>)
@@ -1221,12 +1310,12 @@ INDEX_HTML = """<!DOCTYPE html>
                   </div>
                   <div style="display: flex; gap: 8px; flex-shrink: 0;">
                     ${isPaused ? `
-                      <button class="btn btn-primary" onclick="restartDownload('${d.pid}', '${d.repo_id}')">▶️ Resume Download</button>
+                      <button class="btn btn-primary" onclick="restartDownload('${d.pid}', '${d.repo_id}', '${subfolder}')">▶️ Resume Download</button>
                     ` : `
-                      <button class="btn btn-warning" onclick="pauseDownload('${d.pid}', '${d.repo_id}')">⏸️ Pause</button>
-                      <button class="btn btn-primary" onclick="restartDownload('${d.pid}', '${d.repo_id}')" title="Restarts connection with Rust multi-threaded acceleration">🔄 Kick / Re-connect</button>
+                      <button class="btn btn-warning" onclick="pauseDownload('${d.pid}', '${d.repo_id}', '${subfolder}')">⏸️ Pause</button>
+                      <button class="btn btn-primary" onclick="restartDownload('${d.pid}', '${d.repo_id}', '${subfolder}')" title="Restarts connection with Rust multi-threaded acceleration">🔄 Kick / Re-connect</button>
                     `}
-                    <button class="btn btn-danger" onclick="cancelDownload('${d.pid}', '${d.repo_id}')">🛑 Cancel</button>
+                    <button class="btn btn-danger" onclick="cancelDownload('${d.pid}', '${d.repo_id}', '${subfolder}')">🛑 Cancel</button>
                   </div>
                 </div>
               </div>`;
@@ -1235,6 +1324,9 @@ INDEX_HTML = """<!DOCTYPE html>
           dlBanner.style.display = 'none';
           dlBanner.innerHTML = '';
         }
+
+        const stats = data.stats || {};
+        if (stats.free_ram_gb) currentFreeRam = stats.free_ram_gb;
 
         if (stats.total_ram_gb) {
           document.getElementById('htopRamVal').innerText = stats.used_ram_gb + ' / ' + stats.total_ram_gb + ' GB (' + stats.ram_percent + '%)';
@@ -1259,21 +1351,28 @@ INDEX_HTML = """<!DOCTYPE html>
           activeServers.forEach(s => {
             const isReady = s.status === 'READY';
             serverContainer.innerHTML += `
-              <div class="card" style="border-color: ${isReady ? '#10b981' : '#f59e0b'};">
+              <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                  <div>
-                    <div class="card-title">${s.model}</div>
-                    <div class="card-meta">
-                      Host: http://${s.host}:${s.port}/v1<br>
-                      PID: ${s.pid} | Status: <span style="color: ${isReady ? '#34d399' : '#f59e0b'}; font-weight:600;">[${s.status}]</span>
-                    </div>
-                  </div>
-                  <button class="btn btn-danger" onclick="stopServer('${s.pid}')">Stop Server</button>
+                  <div class="card-title">${s.model}</div>
+                  <span class="status-pill ${isReady ? 'ready' : 'none'}">
+                    <span class="status-dot ${isReady ? '' : 'pulse'}"></span> ${s.status}
+                  </span>
+                </div>
+                <div class="card-meta">
+                  Port: <strong>${s.port}</strong> | Host: <strong>${s.host}</strong> | PID: ${s.pid}<br>
+                  Endpoint: <code style="color: #60a5fa;">http://${s.host}:${s.port}/v1</code>
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                  <button class="btn btn-danger" style="flex: 1;" onclick="stopServer('${s.pid}')">Stop Server</button>
+                  <button class="btn btn-secondary" onclick="switchTab('test'); loadTestServers();">Test API</button>
                 </div>
               </div>`;
           });
         } else {
-          statusHeader.innerHTML = `<div class="status-pill none"><span class="status-dot"></span> No MLX Model Running</div>`;
+          statusHeader.innerHTML = `
+            <div class="status-pill none">
+              <span class="status-dot"></span> 0 Active MLX Servers
+            </div>`;
           serverContainer.innerHTML = `<div class="card" style="grid-column: 1 / -1; text-align: center; color: var(--text-muted);">No model currently running. Click "Start Model" on any downloaded model below!</div>`;
         }
 
@@ -1346,7 +1445,7 @@ INDEX_HTML = """<!DOCTYPE html>
           const tagBadge = m.arch_tag ? `<span style="font-size:11px; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.08); color: ${badgeColor}; margin-left: 6px;">${m.arch_tag}</span>` : '';
           const ramBadge = getRamBadge(m.size_gb || 6.0, currentFreeRam);
           const isChecked = selectedForCompare.has(m.name) ? 'checked' : '';
-          const hfUrl = `https://huggingface.co/${m.name}`;
+          const hfUrl = m.base_name ? `https://huggingface.co/${m.base_name}${m.subfolder ? '/tree/main/' + m.subfolder : ''}` : `https://huggingface.co/${m.name}`;
 
           const fastSwapCard = `
             <div class="card">
@@ -1399,13 +1498,61 @@ INDEX_HTML = """<!DOCTYPE html>
     }
 
     async function doSearch() {
-      const query = document.getElementById('searchInput').value || 'gemma 4';
+      const query = (document.getElementById('searchInput').value || 'gemma 4').trim();
       const sort = document.getElementById('sortSelect').value || 'downloads';
       const limit = document.getElementById('limitSelect').value || '50';
       const resultsGrid = document.getElementById('searchResultsGrid');
       const metaHeader = document.getElementById('searchMetaHeader');
 
       resultsGrid.innerHTML = '<div style="color: var(--text-muted);">Searching Hugging Face repositories...</div>';
+
+      // Check if user entered a direct Hugging Face URL with subfolder/tree
+      if (query.includes('huggingface.co/') || query.includes('/tree/') || query.includes('/blob/')) {
+        let repoPart = query.split('huggingface.co/').pop().replace(/^\/+|\/+$/g, '');
+        let subfolder = '';
+        let repoId = repoPart;
+        if (repoPart.includes('/tree/')) {
+          const m = repoPart.match(/^([^/]+\/[^/]+)\/tree\/[^/]+(?:\/(.+))?$/);
+          if (m) {
+            repoId = m[1];
+            subfolder = m[2] || '';
+          }
+        } else if (repoPart.includes('/blob/')) {
+          const m = repoPart.match(/^([^/]+\/[^/]+)\/blob\/[^/]+(?:\/(.+))?$/);
+          if (m) {
+            repoId = m[1];
+            let rest = m[2] || '';
+            subfolder = rest.includes('/') ? rest.substring(0, rest.lastIndexOf('/')) : rest;
+          }
+        }
+        
+        const display = subfolder ? `${repoId} (${subfolder})` : repoId;
+        const hfDirectUrl = `https://huggingface.co/${repoId}${subfolder ? '/tree/main/' + subfolder : ''}`;
+        
+        resultsGrid.innerHTML = `
+          <div class="card" style="grid-column: 1 / -1; border-color: #6366f1; background: rgba(99, 102, 241, 0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <span class="status-pill downloading" style="margin-bottom: 6px; display: inline-block;">
+                  ⚡ DIRECT HUGGING FACE MODEL DETECTED
+                </span>
+                <div class="card-title" style="font-size: 17px; color: #fff;">${display}</div>
+                <div class="card-meta" style="margin-top: 4px;">
+                  Repo ID: <strong>${repoId}</strong> ${subfolder ? `| Target Subfolder: <strong style="color: #a5b4fc;">${subfolder}</strong>` : ''}
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-primary" style="padding: 12px 24px; font-size: 14px;" onclick="executeDownload('${repoId}', '${subfolder}')">
+                  ⚡ Download ${subfolder ? subfolder : 'Model'}
+                </button>
+                <a href="${hfDirectUrl}" target="_blank" class="btn btn-secondary" style="padding: 12px 16px; font-size: 13px;">🔗 Open on HF</a>
+              </div>
+            </div>
+          </div>
+        `;
+        metaHeader.innerText = `Detected direct Hugging Face URL for '${display}'`;
+        return;
+      }
 
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&sort=${sort}&limit=${limit}&filter=${currentFilter}`);
       const data = await res.json();
@@ -1556,31 +1703,98 @@ INDEX_HTML = """<!DOCTYPE html>
       updateStatus(); loadModels();
     }
 
-    async function pauseDownload(pid, repoId) {
-      await fetch('/api/pause_download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pid: pid, repo_id: repoId })
-      });
-      updateStatus();
+    function closeQuantModal() {
+      document.getElementById('quantModal').classList.remove('active');
     }
 
-    async function restartDownload(pid, repoId) {
-      alert(`Resuming download for ${repoId} with Rust acceleration... Resuming from saved downloaded cache!`);
-      await fetch('/api/restart_download', {
+    function showQuantModal(repoId, variants) {
+      document.getElementById('quantModalSubtitle').innerHTML = `
+        Repository <strong style="color: #60a5fa;">${repoId}</strong> bundles multiple subfolder quantizations. Select a specific bit precision below to download only that model (saving dozens of GBs!):
+      `;
+      const container = document.getElementById('quantModalVariants');
+      container.innerHTML = '';
+
+      variants.forEach(v => {
+        const isRec = v.label.includes('Recommended') || v.subfolder.includes('4-bit') || v.subfolder.includes('4bit');
+        container.innerHTML += `
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 8px; background: ${isRec ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.04)'}; border: 1px solid ${isRec ? '#6366f1' : 'rgba(255, 255, 255, 0.08)'};">
+            <div>
+              <strong style="font-size: 14px; color: ${isRec ? '#a5b4fc' : '#f3f4f6'};">${v.label}</strong>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Subfolder: <code>${v.subfolder}</code> | Size: <strong style="color: #34d399;">${v.size_str}</strong></div>
+            </div>
+            <button class="btn ${isRec ? 'btn-primary' : 'btn-secondary'}" onclick="closeQuantModal(); executeDownload('${repoId}', '${v.subfolder}')">
+              ⚡ Download ${v.subfolder}
+            </button>
+          </div>
+        `;
+      });
+
+      document.getElementById('quantDownloadAllBtn').onclick = () => {
+        closeQuantModal();
+        executeDownload(repoId, '');
+      };
+
+      document.getElementById('quantModal').classList.add('active');
+    }
+
+    async function executeDownload(repoId, subfolder = '') {
+      const desc = subfolder ? `${repoId} (${subfolder})` : repoId;
+      alert(`Started downloading ${desc} via Rust Accelerated Hugging Face CLI!`);
+      await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pid: pid, repo_id: repoId })
+        body: JSON.stringify({ repo_id: repoId, subfolder: subfolder })
       });
       setTimeout(updateStatus, 1000);
     }
 
-    async function cancelDownload(pid, repoId) {
+    async function downloadRepo(repoId, subfolder = '') {
+      if (subfolder || repoId.includes('/tree/') || repoId.includes(':') || repoId.includes('/blob/')) {
+        executeDownload(repoId, subfolder);
+        return;
+      }
+
+      // Check if repo has multiple quant variants
+      try {
+        const res = await fetch(`/api/repo_variants?repo_id=${encodeURIComponent(repoId)}`);
+        const data = await res.json();
+        if (data.variants && data.variants.length > 0) {
+          showQuantModal(repoId, data.variants);
+          return;
+        }
+      } catch (e) {
+        console.warn("Could not check repo variants:", e);
+      }
+
+      executeDownload(repoId, '');
+    }
+
+    async function pauseDownload(pid, repoId, subfolder = '') {
+      await fetch('/api/pause_download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pid: pid, repo_id: repoId, subfolder: subfolder })
+      });
+      updateStatus();
+    }
+
+    async function restartDownload(pid, repoId, subfolder = '') {
+      const desc = subfolder ? `${repoId} (${subfolder})` : repoId;
+      alert(`Resuming download for ${desc} with Rust acceleration... Resuming from saved downloaded cache!`);
+      await fetch('/api/restart_download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pid: pid, repo_id: repoId, subfolder: subfolder })
+      });
+      setTimeout(updateStatus, 1000);
+    }
+
+    async function cancelDownload(pid, repoId, subfolder = '') {
       if (confirm("Cancel and stop tracking this Hugging Face download?")) {
         await fetch('/api/cancel_download', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pid: pid, repo_id: repoId })
+          body: JSON.stringify({ pid: pid, repo_id: repoId, subfolder: subfolder })
         });
         updateStatus();
       }
@@ -1606,16 +1820,6 @@ INDEX_HTML = """<!DOCTYPE html>
         });
         loadModels();
       }
-    }
-
-    async function downloadRepo(repoId) {
-      alert(`Started downloading ${repoId} via Rust Accelerated Hugging Face CLI!`);
-      await fetch('/api/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo_id: repoId })
-      });
-      setTimeout(updateStatus, 1000);
     }
 
     async function sendTestPrompt() {

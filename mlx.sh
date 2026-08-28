@@ -304,32 +304,93 @@ for i, r in enumerate(results, 1):
 
 # ── 3. Download / Add Model ──────────────────────────────────────────
 download_model() {
-    local model_repo="${1:-}"
-    if [ -z "$model_repo" ]; then
+    local model_input="${1:-}"
+    if [ -z "$model_input" ]; then
         echo ""
-        echo -n "Enter Hugging Face Repo ID (e.g. mlx-community/Qwen2.5-Coder-7B-Instruct-4bit) [b: Back, e: Exit]: "
-        read -r model_repo
-        check_nav "$model_repo" || return
+        echo -n "Enter Hugging Face Repo ID or URL (e.g. mlx-community/Qwen2.5-Coder-7B-Instruct-4bit or https://huggingface.co/orcarouter/Qwen3.8-27B-Uncensored-MLX/tree/main/4-bit) [b: Back, e: Exit]: "
+        read -r model_input
+        check_nav "$model_input" || return
     fi
-    [ -z "$model_repo" ] && return
+    [ -z "$model_input" ] && return
+
+    local parsed_json
+    parsed_json=$(python3 -c "
+import sys, json, os
+sys.path.insert(0, '$PID_DIR')
+sys.path.insert(0, '$(pwd)')
+import mlx_helper
+print(json.dumps(mlx_helper.parse_hf_identifier('$model_input')))
+")
+
+    local repo_id
+    local subfolder
+    local revision
+    local display_name
+    repo_id=$(echo "$parsed_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('repo_id', ''))")
+    subfolder=$(echo "$parsed_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('subfolder', ''))")
+    revision=$(echo "$parsed_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('revision', 'main'))")
+    display_name=$(echo "$parsed_json" | python3 -c "import sys, json; print(json.load(sys.stdin).get('display_name', ''))")
+
+    # If no subfolder was provided in URL, check if the repo has multiple quantization variants
+    if [ -z "$subfolder" ]; then
+        local variants_json
+        variants_json=$(python3 -c "
+import sys, json, os
+sys.path.insert(0, '$PID_DIR')
+sys.path.insert(0, '$(pwd)')
+import mlx_helper
+print(json.dumps(mlx_helper.get_repo_quant_variants('$repo_id')))
+")
+        local v_count
+        v_count=$(echo "$variants_json" | python3 -c "import sys, json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+
+        if [ "$v_count" -gt 0 ]; then
+            echo ""
+            echo "⚡ Repository '$repo_id' has multiple quantization subfolders:"
+            echo "$variants_json" | python3 -c "
+import sys, json
+variants = json.load(sys.stdin)
+for i, v in enumerate(variants, 1):
+    rec = ' 🌟 [Recommended]' if 'Recommended' in v['label'] else ''
+    print(f\"  {i}. {v['subfolder']:<10} (Size: {v['size_str']}){rec}\")
+print(f\"  {len(variants)+1}. Download Full Repository (All Quantizations)\")
+"
+            echo -n "Select option [1-$((v_count+1)), b: Back]: "
+            local opt
+            read -r opt
+            check_nav "$opt" || return
+            if [ -n "$opt" ] && [ "$opt" -ge 1 ] 2>/dev/null && [ "$opt" -le "$v_count" ] 2>/dev/null; then
+                subfolder=$(echo "$variants_json" | python3 -c "import sys, json; print(json.load(sys.stdin)[$opt-1]['subfolder'])")
+                display_name="$repo_id ($subfolder)"
+            fi
+        fi
+    fi
 
     echo ""
-    echo "Downloading model '$model_repo' using High Speed Hugging Face CLI ('hf')..."
+    echo "Downloading '$display_name' using High Speed Hugging Face CLI ('hf')..."
     echo "---------------------------------------------------------"
 
     export HF_HUB_ENABLE_HF_TRANSFER=1
     export HF_XET_HIGH_PERFORMANCE=1
 
+    local dl_args=("$repo_id")
+    if [ -n "$subfolder" ]; then
+        dl_args+=(--include "$subfolder/*")
+    fi
+    if [ -n "$revision" ] && [ "$revision" != "main" ]; then
+        dl_args+=(--revision "$revision")
+    fi
+
     if command -v hf &>/dev/null; then
-        hf download "$model_repo"
+        hf download "${dl_args[@]}"
     elif command -v huggingface-cli &>/dev/null; then
-        huggingface-cli download "$model_repo"
+        huggingface-cli download "${dl_args[@]}"
     else
-        python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$model_repo')"
+        python3 -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$repo_id', allow_patterns=['$subfolder/*'] if '$subfolder' else None)"
     fi
 
     echo ""
-    echo "✓ Download process completed for '$model_repo'."
+    echo "✓ Download process completed for '$display_name'."
     echo ""
     read -r -p "Press Enter to continue..."
 }

@@ -1,5 +1,5 @@
 
-# ⚡ macOS MLX Control Center
+# ⚡ macOS MLX Control Center `v0.2`
 
 > **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon M-Series processors.**
 
@@ -39,6 +39,7 @@ curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/in
 Most local LLM runners are either overly complex, hog system menubars, or require manual hand-editing of configuration JSON files for coding tools. **macOS MLX Control Center** solves this with:
 
 * 🚀 **1-Click Model Launching & Hot Swapping**: Instantly switch between MLX models without terminal commands.
+* 📦 **Multi-Quant & Subfolder HF Support (v0.2)**: Direct support for repositories with multiple quantizations (e.g. `orcarouter/Qwen3.8-27B-Uncensored-MLX/tree/main/4-bit`). Pick exact bit precision (`2-bit`, `4-bit`, `6-bit`, `8-bit`) and download only the weights you need instead of 80+ GB!
 * 🌐 **Supercharged Hugging Face Search**: Search thousands of model weights directly with instant filter chips (`⚡ MLX Models`, `🎯 4-Bit Quantized`, `💻 Code Models`) and sorting (`Most Downloads`, `Most Liked`, `Recently Updated`).
 * 🤖 **Built-In AI Model Comparison Engine**: Select 2 to 4 models to generate an instant technical breakdown comparing quantization precision (`2bit-DQ`, `OptiQ-4bit`), RAM compatibility, and specialization — *works 100% locally out-of-the-box with zero API keys or accounts required!*
 * 🟢 **"Can I Run It?" Apple Silicon RAM Calculator**: Live color-coded RAM budget badges (`🟢 Fits Smoothly`, `🟡 High RAM Pressure`, `🔴 Swap Danger`) computed against your Mac's actual free memory.

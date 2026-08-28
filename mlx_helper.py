@@ -31,6 +31,125 @@ def save_global_settings(settings):
     except Exception:
         pass
 
+def parse_hf_identifier(input_str, explicit_subfolder=""):
+    """Parses any Hugging Face URL, repo ID with subfolder, or raw path into structured components."""
+    s = (input_str or "").strip()
+    subfolder = (explicit_subfolder or "").strip()
+    revision = "main"
+    s = re.sub(r"/+$", "", s)
+
+    if "huggingface.co/" in s:
+        path_part = s.split("huggingface.co/")[-1].strip("/")
+        m_tree = re.match(r"^([^/]+/[^/]+)/tree/([^/]+)(?:/(.+))?$", path_part)
+        m_blob = re.match(r"^([^/]+/[^/]+)/blob/([^/]+)(?:/(.+))?$", path_part)
+        if m_tree:
+            repo_id = m_tree.group(1)
+            revision = m_tree.group(2)
+            if m_tree.group(3):
+                subfolder = m_tree.group(3).strip("/")
+        elif m_blob:
+            repo_id = m_blob.group(1)
+            revision = m_blob.group(2)
+            if m_blob.group(3):
+                rest = m_blob.group(3).strip("/")
+                if "/" in rest:
+                    subfolder = os.path.dirname(rest)
+                elif not any(rest.endswith(ext) for ext in [".json", ".safetensors", ".bin", ".md", ".jinja", ".txt"]):
+                    subfolder = rest
+        else:
+            parts = path_part.split("/")
+            if len(parts) >= 2:
+                repo_id = f"{parts[0]}/{parts[1]}"
+                if len(parts) > 2 and not subfolder:
+                    subfolder = "/".join(parts[2:])
+            else:
+                repo_id = path_part
+    elif ":" in s:
+        repo_id, sf = s.split(":", 1)
+        subfolder = sf.strip()
+    else:
+        parts = s.split("/")
+        if len(parts) > 2:
+            repo_id = f"{parts[0]}/{parts[1]}"
+            if not subfolder:
+                subfolder = "/".join(parts[2:])
+        else:
+            repo_id = s
+
+    display_name = f"{repo_id} ({subfolder})" if subfolder else repo_id
+    download_id = f"{repo_id}:{subfolder}" if subfolder else repo_id
+
+    return {
+        "repo_id": repo_id,
+        "subfolder": subfolder,
+        "revision": revision,
+        "display_name": display_name,
+        "download_id": download_id
+    }
+
+def get_repo_files_size(repo_id, subfolder=""):
+    cache_key = f"{repo_id}:{subfolder}" if subfolder else repo_id
+    if cache_key in _REPO_SIZE_CACHE:
+        return _REPO_SIZE_CACHE[cache_key]
+    try:
+        url = f"https://huggingface.co/api/models/{urllib.parse.quote(repo_id)}/tree/main?recursive=true"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            files = json.loads(resp.read().decode())
+            total = 0
+            sf_prefix = f"{subfolder.strip('/')}/" if subfolder else ""
+            for f in files:
+                if isinstance(f, dict) and "size" in f:
+                    path = f.get("path", "")
+                    sz = f.get("size", 0)
+                    if subfolder:
+                        if path.startswith(sf_prefix) or path == subfolder:
+                            total += sz
+                    else:
+                        total += sz
+            if total > 0:
+                _REPO_SIZE_CACHE[cache_key] = total
+                return total
+    except Exception:
+        pass
+    return 0
+
+def get_repo_quant_variants(repo_id):
+    """Detects if a repo has multiple quantization subfolders (e.g. 2-bit, 4-bit, 6-bit, 8-bit)."""
+    try:
+        url = f"https://huggingface.co/api/models/{urllib.parse.quote(repo_id)}/tree/main"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            items = json.loads(resp.read().decode())
+            dirs = [it.get("path", "") for it in items if it.get("type") == "directory"]
+            
+            quant_dirs = []
+            for d in dirs:
+                dl = d.lower()
+                if any(q in dl for q in ["bit", "quant", "bf16", "fp16", "q4", "q8", "int4", "int8", "awq", "gptq", "mlx"]):
+                    quant_dirs.append(d)
+                elif re.match(r"^\d+(-|_)?bit$", dl):
+                    quant_dirs.append(d)
+            
+            variants = []
+            for qd in (quant_dirs if quant_dirs else dirs):
+                sz = get_repo_files_size(repo_id, subfolder=qd)
+                sz_gb = sz / (1024**3)
+                sz_str = f"{sz_gb:.1f} GB" if sz_gb >= 1 else f"{sz/(1024**2):.1f} MB"
+                label = qd
+                if "4-bit" in qd.lower() or "4bit" in qd.lower():
+                    label = f"{qd} (Recommended)"
+                variants.append({
+                    "subfolder": qd,
+                    "label": label,
+                    "size_bytes": sz,
+                    "size_str": sz_str,
+                    "size_gb": round(sz_gb, 2)
+                })
+            return variants
+    except Exception:
+        return []
+
 def load_paused_downloads():
     if os.path.exists(PAUSED_FILE):
         try:
@@ -168,14 +287,23 @@ def find_local_models():
 
                 parent_hub_dir = root
                 parts = root.split(os.sep)
-                name = ""
+                base_name = ""
                 for p in parts:
                     if p.startswith("models--"):
-                        name = p.replace("models--", "").replace("--", "/")
+                        base_name = p.replace("models--", "").replace("--", "/")
                         parent_hub_dir = root[:root.find(p) + len(p)]
                         break
-                if not name:
-                    name = os.path.basename(root)
+                if not base_name:
+                    base_name = os.path.basename(root)
+
+                # Check if this model is inside a quantization subfolder (e.g. snapshots/<hash>/4-bit)
+                subfolder = ""
+                if "snapshots" in parts:
+                    snap_idx = parts.index("snapshots")
+                    if len(parts) > snap_idx + 2:
+                        subfolder = "/".join(parts[snap_idx + 2:])
+
+                display_name = f"{base_name} ({subfolder})" if subfolder else base_name
 
                 model_type = "unknown"
                 supported = True
@@ -202,25 +330,39 @@ def find_local_models():
 
                 seen_paths.add(real_path)
 
+                # Calculate accurate model size by resolving symlinks in this model directory
                 size_bytes = 0
-                calc_dir = parent_hub_dir if "models--" in parent_hub_dir else root
-                for r, d, f in os.walk(calc_dir):
+                for r, d, f in os.walk(root):
                     for file in f:
                         fp = os.path.join(r, file)
-                        if not os.path.islink(fp):
-                            try:
-                                size_bytes += os.path.getsize(fp)
-                            except Exception:
-                                pass
+                        try:
+                            size_bytes += os.stat(fp).st_size
+                        except Exception:
+                            pass
+                
+                # If size resolved to 0 (e.g. non-symlink blobs folder), fallback to walking parent
+                if size_bytes == 0:
+                    calc_dir = parent_hub_dir if "models--" in parent_hub_dir else root
+                    for r, d, f in os.walk(calc_dir):
+                        for file in f:
+                            fp = os.path.join(r, file)
+                            if not os.path.islink(fp):
+                                try:
+                                    size_bytes += os.path.getsize(fp)
+                                except Exception:
+                                    pass
+
                 size_gb = size_bytes / (1024**3)
                 size_str = f"{size_gb:.1f} GB" if size_gb >= 1 else f"{size_bytes/(1024**2):.1f} MB"
 
                 models.append({
-                    "name": name,
+                    "name": display_name,
+                    "base_name": base_name,
+                    "subfolder": subfolder,
                     "size": size_str,
                     "size_gb": round(size_gb, 2),
                     "path": root,
-                    "delete_target": calc_dir,
+                    "delete_target": root if subfolder else (parent_hub_dir if "models--" in parent_hub_dir else root),
                     "supported": supported,
                     "arch_tag": arch_tag,
                     "model_type": model_type
@@ -281,22 +423,6 @@ def get_running_servers():
 
     return list(unique.values())
 
-def get_repo_files_size(repo_id):
-    if repo_id in _REPO_SIZE_CACHE:
-        return _REPO_SIZE_CACHE[repo_id]
-    try:
-        url = f"https://huggingface.co/api/models/{urllib.parse.quote(repo_id)}/tree/main?recursive=true"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            files = json.loads(resp.read().decode())
-            total = sum(f.get("size", 0) for f in files if isinstance(f, dict) and "size" in f)
-            if total > 0:
-                _REPO_SIZE_CACHE[repo_id] = total
-                return total
-    except Exception:
-        pass
-    return 0
-
 def get_active_downloads():
     downloads = []
     now = time.time()
@@ -307,13 +433,22 @@ def get_active_downloads():
                 parts = line.split()
                 pid = parts[1]
                 repo_match = re.search(r"download\s+([^\s]+)", line)
-                repo_id = repo_match.group(1) if repo_match else "unknown"
-                
+                raw_repo = repo_match.group(1) if repo_match else "unknown"
+
+                include_match = re.search(r"--include\s+[\"']?([^\"'\s]+)[\"']?", line)
+                explicit_sf = include_match.group(1).replace("/*", "").strip() if include_match else ""
+
+                parsed = parse_hf_identifier(raw_repo, explicit_sf)
+                repo_id = parsed["repo_id"]
+                subfolder = parsed["subfolder"]
+                download_id = parsed["download_id"]
+                display_name = parsed["display_name"]
+
                 cache_dir = ""
                 if "/" in repo_id:
                     org, repo = repo_id.split("/", 1)
                     cache_dir = os.path.expanduser(f"~/.cache/huggingface/hub/models--{org}--{repo}")
-                
+
                 downloaded_bytes = 0
                 if cache_dir and os.path.exists(cache_dir):
                     for r, d, f in os.walk(cache_dir):
@@ -325,14 +460,14 @@ def get_active_downloads():
                                 except Exception:
                                     pass
 
-                total_bytes = get_repo_files_size(repo_id)
+                total_bytes = get_repo_files_size(repo_id, subfolder=subfolder)
                 percent = round((downloaded_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
                 percent = min(100.0, percent)
 
                 speed_str = "Calculating..."
                 eta_str = "--"
-                if repo_id in _SPEED_CACHE:
-                    prev_bytes, prev_time = _SPEED_CACHE[repo_id]
+                if download_id in _SPEED_CACHE:
+                    prev_bytes, prev_time = _SPEED_CACHE[download_id]
                     dt = now - prev_time
                     if dt > 0.5:
                         dbytes = downloaded_bytes - prev_bytes
@@ -349,17 +484,20 @@ def get_active_downloads():
                                     eta_str = f"{rem_sec//60}m {rem_sec%60}s"
                         else:
                             speed_str = "0 MB/s"
-                _SPEED_CACHE[repo_id] = (downloaded_bytes, now)
+                _SPEED_CACHE[download_id] = (downloaded_bytes, now)
 
                 dl_gb = downloaded_bytes / (1024**3)
                 dl_str = f"{dl_gb:.2f} GB" if dl_gb >= 1 else f"{downloaded_bytes/(1024**2):.1f} MB"
-                
+
                 tot_gb = total_bytes / (1024**3)
                 tot_str = f"{tot_gb:.2f} GB" if tot_gb >= 1 else (f"{total_bytes/(1024**2):.1f} MB" if total_bytes > 0 else "Unknown")
 
                 downloads.append({
                     "pid": pid,
                     "repo_id": repo_id,
+                    "subfolder": subfolder,
+                    "download_id": download_id,
+                    "display_name": display_name,
                     "downloaded_bytes": downloaded_bytes,
                     "downloaded_size": dl_str,
                     "total_bytes": total_bytes,
@@ -375,10 +513,15 @@ def get_active_downloads():
 
     # Add Paused Downloads to list
     paused = load_paused_downloads()
-    active_repos = {d["repo_id"] for d in downloads}
-    
-    for repo_id, pinfo in list(paused.items()):
-        if repo_id not in active_repos:
+    active_ids = {d["download_id"] for d in downloads}
+
+    for dl_id, pinfo in list(paused.items()):
+        if dl_id not in active_ids:
+            if isinstance(pinfo, str):
+                pinfo = {"repo_id": pinfo, "subfolder": "", "cache_dir": ""}
+            repo_id = pinfo.get("repo_id", dl_id)
+            subfolder = pinfo.get("subfolder", "")
+            display_name = f"{repo_id} ({subfolder})" if subfolder else repo_id
             cache_dir = pinfo.get("cache_dir", "")
             downloaded_bytes = 0
             if cache_dir and os.path.exists(cache_dir):
@@ -390,19 +533,22 @@ def get_active_downloads():
                                 downloaded_bytes += os.path.getsize(fp)
                             except Exception:
                                 pass
-            total_bytes = get_repo_files_size(repo_id)
+            total_bytes = get_repo_files_size(repo_id, subfolder=subfolder)
             percent = round((downloaded_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0
             percent = min(100.0, percent)
 
             dl_gb = downloaded_bytes / (1024**3)
             dl_str = f"{dl_gb:.2f} GB" if dl_gb >= 1 else f"{downloaded_bytes/(1024**2):.1f} MB"
-            
+
             tot_gb = total_bytes / (1024**3)
             tot_str = f"{tot_gb:.2f} GB" if tot_gb >= 1 else (f"{total_bytes/(1024**2):.1f} MB" if total_bytes > 0 else "Unknown")
 
             downloads.append({
                 "pid": None,
                 "repo_id": repo_id,
+                "subfolder": subfolder,
+                "download_id": dl_id,
+                "display_name": display_name,
                 "downloaded_bytes": downloaded_bytes,
                 "downloaded_size": dl_str,
                 "total_bytes": total_bytes,
