@@ -239,12 +239,12 @@ def is_vision_model(model_path_or_id, config_dict=None):
         if model_type in vision_model_types:
             return True
             
-        for a in archs:
-            if any(k in a for k in ["conditionalgeneration", "vlforcw", "vl", "vision", "multimodality", "paligemma", "pixtral", "mllama", "llava", "molmo"]):
-                return True
-                
-        if "vision_config" in cfg or "image_token_id" in cfg or "audio_config" in cfg:
+        if isinstance(cfg.get("vision_config"), dict) and len(cfg["vision_config"]) > 0:
             return True
+            
+        for a in archs:
+            if any(k in a for k in ["qwen2vl", "qwen2_5_vl", "qwenvl", "gemma4", "paligemma", "pixtral", "mllama", "llava", "molmo", "smolvlm", "vision", "multimodality"]):
+                return True
 
     # 2. Check if preprocessor or processor config exists in local directory
     if os.path.isdir(str(model_path_or_id)):
@@ -252,8 +252,12 @@ def is_vision_model(model_path_or_id, config_dict=None):
            os.path.exists(os.path.join(model_path_or_id, "processor_config.json")):
             return True
 
-    # 3. Keyword / Substring heuristics on model ID / path
-    vision_keywords = ["-vl-", "-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "gemma-4", "gemma-3", "paligemma", "pixtral", "llava", "smolvlm", "minicpm-v", "florence", "internvl", "molmo", "vision", "multimodal"]
+    # 3. Explicitly exclude code reasoning / distilled text LLMs that lack vision towers
+    if any(k in name_check for k in ["code-reasoning", "deepseek-v4", "r1-distill", "coder"]):
+        return False
+
+    # 4. Specific Keyword / Substring heuristics on model ID / path
+    vision_keywords = ["-vl-", "-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "gemma-4", "gemma-3", "paligemma", "pixtral", "llava", "smolvlm", "minicpm-v", "florence", "internvl", "molmo", "vision"]
     if any(k in name_check for k in vision_keywords):
         return True
 
