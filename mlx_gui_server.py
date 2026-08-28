@@ -21,6 +21,48 @@ MODEL_DIR = os.path.expanduser("~/mlx_models")
 sys.path.insert(0, PID_DIR)
 import mlx_helper
 
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="50%" stop-color="#4facfe"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="16" fill="url(#bgGrad)" stroke="#6366f1" stroke-width="2" stroke-opacity="0.4"/>
+  <line x1="20" y1="2" x2="20" y2="0" stroke="#00f2fe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="32" y1="2" x2="32" y2="0" stroke="#4facfe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="44" y1="2" x2="44" y2="0" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="20" y1="64" x2="20" y2="62" stroke="#00f2fe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="32" y1="64" x2="32" y2="62" stroke="#4facfe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="44" y1="64" x2="44" y2="62" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="2" y1="20" x2="0" y2="20" stroke="#00f2fe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="2" y1="32" x2="0" y2="32" stroke="#4facfe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="2" y1="44" x2="0" y2="44" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="64" y1="20" x2="62" y2="20" stroke="#00f2fe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="64" y1="32" x2="62" y2="32" stroke="#4facfe" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="64" y1="44" x2="62" y2="44" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M 32 14 C 20 14 14 20 14 28 C 14 34 18 38 20 42 C 22 46 25 50 31 51" fill="none" stroke="url(#neonGrad)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 32 14 C 44 14 50 20 50 28 C 50 34 46 38 44 42 C 42 46 39 50 33 51" fill="none" stroke="url(#neonGrad)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M 22 25 L 32 30 L 42 25" fill="none" stroke="#00f2fe" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 20 37 L 32 32 L 44 37" fill="none" stroke="#a855f7" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 32 14 L 32 50" fill="none" stroke="url(#sparkGrad)" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="22" cy="25" r="3" fill="#00f2fe"/>
+  <circle cx="42" cy="25" r="3" fill="#a855f7"/>
+  <circle cx="20" cy="37" r="3" fill="#00f2fe"/>
+  <circle cx="44" cy="37" r="3" fill="#a855f7"/>
+  <circle cx="32" cy="32" r="4.5" fill="#ffffff"/>
+  <circle cx="32" cy="32" r="3" fill="#6366f1"/>
+</svg>"""
+
 PORT = 9998
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
@@ -45,12 +87,23 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html_content.encode("utf-8"))
 
+    def send_svg(self, svg_content, status_code=200):
+        self.send_response(status_code)
+        self.send_header("Content-type", "image/svg+xml")
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(svg_content.encode("utf-8"))
+
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -59,6 +112,8 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/index.html":
             self.send_html(INDEX_HTML)
+        elif path == "/favicon.ico" or path == "/favicon.svg":
+            self.send_svg(FAVICON_SVG)
         elif path == "/api/status":
             servers = mlx_helper.get_running_servers()
             stats = mlx_helper.get_system_stats()
@@ -445,6 +500,8 @@ INDEX_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>macOS MLX Control Center</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
