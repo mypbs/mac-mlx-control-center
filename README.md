@@ -1,9 +1,9 @@
 
-# ⚡ macOS MLX Control Center `v0.3`
+# ⚡ macOS MLX Control Center `v0.4` (Vision & Multimodal Edition)
 
-> **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local LLMs on Apple Silicon M-Series processors.**
+> **The simplest, fastest 1-click Web GUI & CLI Control Center to search, download, compare, benchmark, and run local Multimodal Vision & Text LLMs on Apple Silicon M-Series processors.**
 
-Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's high-performance `mlx-lm` framework with a dark glassmorphic web dashboard and terminal interface. It turns any Mac powered by Apple Silicon M-Series processors into a local AI power-station with zero configuration hassle.
+Designed specifically for macOS, **macOS MLX Control Center** bridges Apple's high-performance `mlx-lm` (text) and `mlx-vlm` (vision) frameworks with a dark glassmorphic web dashboard and terminal interface. It turns any Mac powered by Apple Silicon M-Series processors into a local AI power-station with zero configuration hassle.
 
 ### Dashboard Screenshot
 <img width="3522" height="2344" alt="mlx1" src="https://github.com/user-attachments/assets/1a99830a-f565-41df-bc51-399e7f94e568" />
@@ -38,13 +38,17 @@ curl -sSL https://raw.githubusercontent.com/mypbs/mac-mlx-control-center/main/in
 
 Most local LLM runners are either overly complex, hog system menubars, or require manual hand-editing of configuration JSON files for coding tools. **macOS MLX Control Center** solves this with:
 
+* 👁️ **Vision & Multimodal Image Recognition (v0.4)**: Full native integration with `mlx-vlm`! Run Gemma 4, Qwen 2.5/3.8 VL, PaliGemma, Pixtral, LLaVA, SmolVLM, and more with full image analysis, OCR, visual question answering, and chart understanding.
+* 🖼️ **Interactive Vision Test Chat (v0.4)**: Upload and preview images directly in the GUI test bench to test OpenAI-compatible multimodal payloads.
+* ⚙️ **Dual-Engine Auto-Detection (`mlx-vlm` + `mlx-lm`) (v0.4)**: Automatically detects model architectures and chooses the optimal inference engine without manual flags.
+* 🔌 **LibreChat & Coding Agent Multi-Modal Sync (v0.4)**: Direct compatibility with LibreChat (`host.docker.internal:9999/v1`), Pi Code, and OpenCode for image recognition and coding workflows.
 * 🧠 **macOS Memory & Process Manager (v0.3)**: Real-time visual breakdown of Apple Silicon Unified Memory (App, Wired, Compressed, Available Cache) with an interactive top process scanner (`🔍 Manage RAM`) and 1-click process termination to free up memory for larger models.
 * 🔤 **Model Sorting & Date Added (v0.3)**: Sort local and downloaded models by Name (A-Z / Z-A), Size (Largest / Smallest), and Date Added (Newest / Oldest) with exact timestamps on all model cards.
 * 📱 **Horizontal List Mode vs. Card Mode (v0.3)**: Toggle seamlessly between sleek horizontal list rows and spacious square card grid views across all model and search views.
 * 🟢 **Activity Monitor-Aligned RAM Accounting (v0.3)**: Accurate unified memory metrics matching Activity Monitor, `htop`, and `mactop`.
 * 🚀 **1-Click Model Launching & Hot Swapping**: Instantly switch between MLX models without terminal commands.
 * 📦 **Multi-Quant & Subfolder HF Support**: Direct support for repositories with multiple quantizations (e.g. `orcarouter/Qwen3.8-27B-Uncensored-MLX/tree/main/4-bit`). Pick exact bit precision (`2-bit`, `4-bit`, `6-bit`, `8-bit`) and download only the weights you need instead of 80+ GB!
-* 🌐 **Supercharged Hugging Face Search**: Search thousands of model weights directly with instant filter chips (`⚡ MLX Models`, `🎯 4-Bit Quantized`, `💻 Code Models`) and sorting (`Most Downloads`, `Most Liked`, `Recently Updated`).
+* 🌐 **Supercharged Hugging Face Search**: Search thousands of model weights directly with instant filter chips (`⚡ MLX Models`, `👁️ Vision & Multimodal`, `🎯 4-Bit Quantized`, `💻 Code Models`) and sorting (`Most Downloads`, `Most Liked`, `Recently Updated`).
 * 🤖 **Built-In AI Model Comparison Engine**: Select 2 to 4 models to generate an instant technical breakdown comparing quantization precision (`2bit-DQ`, `OptiQ-4bit`), RAM compatibility, and specialization — *works 100% locally out-of-the-box with zero API keys or accounts required!*
 * 🟢 **"Can I Run It?" Apple Silicon RAM Calculator**: Live color-coded RAM budget badges (`🟢 Fits Smoothly`, `🟡 High RAM Pressure`, `🔴 Swap Danger`) computed against your Mac's actual available memory.
 * 🤖 **Auto-Sync Pi Code & OpenCode Agents**: Automatically configures [Pi Code](https://github.com/) and [OpenCode](https://github.com/) under provider `MyMac` (`http://127.0.0.1:9999/v1`). Whenever you swap models in the GUI, your coding agents automatically route to the newly loaded model!

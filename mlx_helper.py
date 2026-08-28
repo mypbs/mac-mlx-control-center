@@ -210,7 +210,56 @@ def save_paused_downloads(data):
     except Exception:
         pass
 
-def sync_pi_and_opencode(active_model, port=9999):
+def is_vision_model(model_path_or_id, config_dict=None):
+    """Accurately detects whether a local path or Hugging Face model ID is a Vision / Multimodal model."""
+    name_check = str(model_path_or_id).lower()
+    
+    # 1. Inspect config dictionary or config.json if available
+    cfg = config_dict
+    if cfg is None and os.path.exists(str(model_path_or_id)):
+        cfg_file = os.path.join(model_path_or_id, "config.json")
+        if os.path.exists(cfg_file):
+            try:
+                with open(cfg_file, "r", errors="ignore") as f:
+                    cfg = json.load(f)
+            except Exception:
+                cfg = None
+                
+    if isinstance(cfg, dict):
+        model_type = str(cfg.get("model_type", "")).lower()
+        archs = [str(a).lower() for a in cfg.get("architectures", []) if a]
+        
+        vision_model_types = {
+            "gemma4", "gemma4_unified", "gemma4_unified_audio", "gemma3", "gemma3_vl",
+            "qwen2_vl", "qwen2_5_vl", "qwen_vl", "mllama", "paligemma", "paligemma2",
+            "pixtral", "llava", "llava_next", "llava_hound", "internvl_chat", "smolvlm",
+            "florence2", "phi3_v", "chameleon", "minicpmv", "molmo", "idefics2", "idefics3",
+            "multi_modality", "blip-2", "vision-encoder-decoder", "mistral3"
+        }
+        if model_type in vision_model_types:
+            return True
+            
+        for a in archs:
+            if any(k in a for k in ["conditionalgeneration", "vlforcw", "vl", "vision", "multimodality", "paligemma", "pixtral", "mllama", "llava", "molmo"]):
+                return True
+                
+        if "vision_config" in cfg or "image_token_id" in cfg or "audio_config" in cfg:
+            return True
+
+    # 2. Check if preprocessor or processor config exists in local directory
+    if os.path.isdir(str(model_path_or_id)):
+        if os.path.exists(os.path.join(model_path_or_id, "preprocessor_config.json")) or \
+           os.path.exists(os.path.join(model_path_or_id, "processor_config.json")):
+            return True
+
+    # 3. Keyword / Substring heuristics on model ID / path
+    vision_keywords = ["-vl-", "-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "gemma-4", "gemma-3", "paligemma", "pixtral", "llava", "smolvlm", "minicpm-v", "florence", "internvl", "molmo", "vision", "multimodal"]
+    if any(k in name_check for k in vision_keywords):
+        return True
+
+    return False
+
+def sync_pi_and_opencode(active_model, port=9999, is_vision=False):
     """Automatically updates Pi Code and OpenCode configurations to auto-detect the active MLX model under provider 'MyMac'."""
     try:
         # 1. Update Pi settings.json
@@ -235,6 +284,7 @@ def sync_pi_and_opencode(active_model, port=9999):
                 if "providers" not in md:
                     md["providers"] = {}
                 
+                inputs = ["text", "image"] if is_vision else ["text"]
                 md["providers"]["MyMac"] = {
                     "baseUrl": f"http://127.0.0.1:{port}/v1",
                     "api": "openai-completions",
@@ -247,9 +297,9 @@ def sync_pi_and_opencode(active_model, port=9999):
                     "models": [
                         {
                             "id": "default_model",
-                            "name": "⚡ Active MLX Model (Auto-Detect)",
+                            "name": f"⚡ Active MLX Model ({'Vision' if is_vision else 'Text'} Auto-Detect)",
                             "reasoning": True,
-                            "input": ["text"],
+                            "input": inputs,
                             "contextWindow": 131072,
                             "maxTokens": 8192,
                             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
@@ -258,7 +308,7 @@ def sync_pi_and_opencode(active_model, port=9999):
                             "id": active_model,
                             "name": f"{active_model} (Local)",
                             "reasoning": True,
-                            "input": ["text"],
+                            "input": inputs,
                             "contextWindow": 131072,
                             "maxTokens": 8192,
                             "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
@@ -292,7 +342,7 @@ def sync_pi_and_opencode(active_model, port=9999):
                         },
                         "models": {
                             "default_model": {
-                                "name": "⚡ Active MLX Model (Auto-Detect)"
+                                "name": f"⚡ Active MLX Model ({'Vision' if is_vision else 'Text'} Auto-Detect)"
                             },
                             active_model: {
                                 "name": active_model
@@ -352,20 +402,23 @@ def find_local_models():
                 model_type = "unknown"
                 supported = True
                 arch_tag = "MLX Compatible"
+                is_vis = False
 
                 if has_config:
                     try:
                         with open(os.path.join(root, "config.json"), "r", errors="ignore") as f:
                             cfg = json.load(f)
                             model_type = str(cfg.get("model_type", "unknown")).lower()
+                            is_vis = is_vision_model(root, cfg)
+                            
                             if model_type in ["bert", "xlm-roberta", "mpnet"]:
                                 supported = False
                                 arch_tag = f"Embedding Model ({model_type})"
-                            elif model_type in ["gemma4_unified", "gemma4_unified_audio"]:
-                                supported = False
-                                arch_tag = f"Experimental Arch ({model_type})"
+                            elif is_vis:
+                                supported = True
+                                arch_tag = f"👁️ MLX Vision ({model_type})"
                             else:
-                                arch_tag = f"MLX ({model_type})"
+                                arch_tag = f"⚡ MLX ({model_type})"
                     except Exception:
                         pass
                 elif has_gguf:
@@ -421,6 +474,8 @@ def find_local_models():
                     "supported": supported,
                     "arch_tag": arch_tag,
                     "model_type": model_type,
+                    "is_vision": is_vis,
+                    "engine": "mlx-vlm" if is_vis else "mlx-lm",
                     "created_ts": round(model_ts, 1),
                     "date_added": date_added_str
                 })
@@ -433,7 +488,7 @@ def get_running_servers():
     try:
         output = subprocess.check_output(["ps", "aux"], text=True)
         for line in output.splitlines():
-            if "mlx_lm.server" in line and "grep" not in line:
+            if ("mlx_lm.server" in line or "mlx_vlm.server" in line or "mlx_vlm" in line) and "grep" not in line:
                 parts = line.split()
                 pid = parts[1]
                 cmd_start = parts[10] if len(parts) > 10 else ""
@@ -451,6 +506,9 @@ def get_running_servers():
                     if m:
                         model = f"{m.group(1)}/{m.group(2)}"
 
+                is_vision = "mlx_vlm" in line
+                engine = "mlx-vlm" if is_vision else "mlx-lm"
+
                 status = "STARTING/UNRESPONSIVE"
                 try:
                     url = f"http://{host}:{port}/v1/models"
@@ -467,6 +525,8 @@ def get_running_servers():
                     "host": host,
                     "port": port,
                     "status": status,
+                    "engine": engine,
+                    "is_vision": is_vision,
                     "is_python": "python" in cmd_start
                 })
     except Exception:
@@ -716,11 +776,12 @@ def classify_process(pid, user, args, active_server_pids=None):
     is_system = False
     is_mlx = str(pid) in active_server_pids or pid in active_server_pids
     
-    if is_mlx or 'mlx_lm.server' in args or 'mlx_lm' in args or 'mlx_gui_server' in args:
+    if is_mlx or 'mlx_lm.server' in args or 'mlx_lm' in args or 'mlx_vlm.server' in args or 'mlx_vlm' in args or 'mlx_gui_server' in args:
         category = 'AI Model'
         m_model = re.search(r'--model\s+([^\s]+)', args)
         if m_model:
-            display_name = f'MLX: {os.path.basename(m_model.group(1))}'
+            model_base = os.path.basename(m_model.group(1))
+            display_name = f'MLX Vision: {model_base}' if 'mlx_vlm' in args else f'MLX: {model_base}'
         elif 'mlx_gui_server' in args:
             display_name = 'MLX Control Center GUI'
         else:
@@ -823,7 +884,10 @@ def kill_process_by_pid(pid):
         servers = get_running_servers()
         for s in servers:
             if str(s.get("pid")) == str(pid):
-                stop_server(str(pid))
+                try:
+                    os.kill(pid, 9)
+                except Exception:
+                    pass
                 return {"status": "ok", "pid": pid, "stopped_mlx": True}
 
         import signal
@@ -858,9 +922,12 @@ def estimate_ram_requirement(repo_id):
 
 def search_hf_api(query, limit=50, sort="downloads", direction=-1, filter_tag="mlx"):
     q = urllib.parse.quote(query)
-    url = f"https://huggingface.co/api/models?search={q}&limit={limit}&sort={sort}&direction={direction}"
-    if filter_tag and filter_tag != "all":
-        url += f"&filter={filter_tag}"
+    if filter_tag == "vision":
+        url = f"https://huggingface.co/api/models?search={q}&pipeline_tag=image-text-to-text&limit={limit}&sort={sort}&direction={direction}"
+    elif filter_tag and filter_tag != "all":
+        url = f"https://huggingface.co/api/models?search={q}&limit={limit}&sort={sort}&direction={direction}&filter={filter_tag}"
+    else:
+        url = f"https://huggingface.co/api/models?search={q}&limit={limit}&sort={sort}&direction={direction}"
         
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     results = []
@@ -870,6 +937,8 @@ def search_hf_api(query, limit=50, sort="downloads", direction=-1, filter_tag="m
             for item in data:
                 repo_id = item.get("id", "")
                 tags = item.get("tags", [])
+                pipeline_tag = item.get("pipeline_tag", "text-generation")
+                is_vis = is_vision_model(repo_id) or pipeline_tag == "image-text-to-text" or "vision" in tags or "multimodal" in tags
                 est_ram = estimate_ram_requirement(repo_id)
                 results.append({
                     "id": repo_id,
@@ -878,7 +947,8 @@ def search_hf_api(query, limit=50, sort="downloads", direction=-1, filter_tag="m
                     "lastModified": item.get("lastModified", "")[:10] if item.get("lastModified") else "",
                     "tags": tags[:4],
                     "est_ram_gb": est_ram,
-                    "pipeline_tag": item.get("pipeline_tag", "text-generation")
+                    "pipeline_tag": pipeline_tag,
+                    "is_vision": is_vis
                 })
     except Exception:
         pass
@@ -917,15 +987,20 @@ def compare_models_ai(repo_ids):
         else:
             fit_status = f"🔴 Swap Danger ({est_ram} GB RAM exceeds free {free_ram} GB)"
 
+        is_vis = is_vision_model(rid)
         spec = "General Chat & Instruction"
-        if "code" in rid_lower or "coder" in rid_lower:
+        if is_vis:
+            spec = "👁️ Vision & Multimodal Image Understanding"
+        elif "code" in rid_lower or "coder" in rid_lower:
             spec = "💻 Coding Agent & Software Engineering"
         elif "reasoning" in rid_lower or "distilled" in rid_lower or "r1" in rid_lower:
             spec = "🧠 Chain-of-Thought Reasoning & Math"
         elif "flash" in rid_lower:
             spec = "⚡ High-Speed Low Latency Inference"
 
-        if "2bit" in rid_lower:
+        if is_vis:
+            verdict = "Top pick for multimodal tasks: image analysis, document vision, OCR, and reasoning."
+        elif "2bit" in rid_lower:
             verdict = "Best choice if RAM is constrained. Allows running large models (32B) without memory paging."
         elif "code" in rid_lower or "coder" in rid_lower:
             verdict = "Top choice for Pi Code & OpenCode programming tasks."
@@ -941,8 +1016,11 @@ def compare_models_ai(repo_ids):
             "est_ram_gb": est_ram,
             "fit_status": fit_status,
             "specialization": spec,
+            "is_vision": is_vis,
             "verdict": verdict
         })
+
+    return {"comparisons": comparisons, "free_ram_gb": free_ram}
 
     return {"comparisons": comparisons, "free_ram_gb": free_ram}
 

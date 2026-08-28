@@ -546,21 +546,42 @@ for i, s in enumerate(servers, 1):
     safe_name=$(echo "$model_name" | tr '/' '_' | tr -cd '[:alnum:]_.-')
     local log_file="$LOG_DIR/${safe_name}_${target_port}.log"
 
+    local is_vis
+    is_vis=$(python3 -c "
+import sys, os
+sys.path.insert(0, '$HOME/mac-mlx-control-center')
+try:
+    import mlx_helper
+    print('yes' if mlx_helper.is_vision_model('$model_path') else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null || echo "no")
+
     echo ""
     echo "Launching MLX Model Server..."
-    echo "  Model: $model_name"
-    echo "  Path:  $model_path"
-    echo "  Host:  $host"
-    echo "  Port:  $target_port"
-    echo "  Log:   $log_file"
+    echo "  Model:  $model_name"
+    echo "  Path:   $model_path"
+    echo "  Engine: $([ "$is_vis" = "yes" ] && echo "👁️ mlx-vlm (Vision & Multimodal)" || echo "⚡ mlx-lm (Text LLM)")"
+    echo "  Host:   $host"
+    echo "  Port:   $target_port"
+    echo "  Log:    $log_file"
     echo "---------------------------------------------------------"
 
-    nohup uvx --from mlx-lm mlx_lm.server \
-        --model "$model_path" \
-        --host "$host" \
-        --port "$target_port" \
-        --temp "$temp" \
-        --max-tokens "$max_tokens" $extra_args > "$log_file" 2>&1 &
+    if [ "$is_vis" = "yes" ]; then
+        nohup uvx --from mlx-vlm --with jinja2 python -m mlx_vlm.server \
+            --model "$model_path" \
+            --host "$host" \
+            --port "$target_port" \
+            --max-tokens "$max_tokens" \
+            --trust-remote-code $extra_args > "$log_file" 2>&1 &
+    else
+        nohup uvx --from mlx-lm mlx_lm.server \
+            --model "$model_path" \
+            --host "$host" \
+            --port "$target_port" \
+            --temp "$temp" \
+            --max-tokens "$max_tokens" $extra_args > "$log_file" 2>&1 &
+    fi
 
     local server_pid=$!
     echo "$server_pid" > "$PID_DIR/${safe_name}_${target_port}.pid"
@@ -901,7 +922,7 @@ main_menu() {
     while true; do
         clear 2>/dev/null || true
         echo "╔════════════════════════════════════════════════════════════╗"
-        echo "║            MLX Model Control Center (MacBook)              ║"
+        echo "║       MLX Model Control Center v0.4 (Vision & Text)        ║"
         echo "╚════════════════════════════════════════════════════════════╝"
         show_running_header
         echo "  1. List Downloaded Models (Select # to Launch)"

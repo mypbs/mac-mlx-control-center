@@ -221,6 +221,7 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
             max_tokens = str(payload.get("max_tokens", st.get("default_max_tokens", 4096)))
             thinking = payload.get("thinking", True)
             draft_model = payload.get("draft", "")
+            engine_pref = payload.get("engine", "auto")
 
             if not model_name:
                 self.send_json({"error": "No model name provided"}, 400)
@@ -242,28 +243,54 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
 
             local_models = mlx_helper.find_local_models()
             model_path = model_name
+            is_vis = False
             for m in local_models:
                 if m["name"] == model_name or m.get("base_name") == model_name or model_name in m["path"]:
                     model_path = m["path"]
+                    is_vis = m.get("is_vision", False)
                     break
 
+            if engine_pref == "mlx-vlm":
+                use_engine = "mlx-vlm"
+                is_vis = True
+            elif engine_pref == "mlx-lm":
+                use_engine = "mlx-lm"
+                is_vis = False
+            else: # "auto"
+                if not is_vis:
+                    is_vis = mlx_helper.is_vision_model(model_path)
+                use_engine = "mlx-vlm" if is_vis else "mlx-lm"
+
             extra_args = []
-            if not thinking:
-                extra_args.extend(["--chat-template-args", '{"enable_thinking":false}'])
-            if draft_model:
-                extra_args.extend(["--draft-model", draft_model, "--num-draft-tokens", "3"])
+            if use_engine == "mlx-vlm":
+                if thinking:
+                    extra_args.append("--enable-thinking")
+                if draft_model:
+                    extra_args.extend(["--draft-model", draft_model])
+                cmd = [
+                    "uvx", "--from", "mlx-vlm", "--with", "jinja2", "python", "-m", "mlx_vlm.server",
+                    "--model", model_path,
+                    "--host", str(host),
+                    "--port", str(port),
+                    "--max-tokens", str(max_tokens),
+                    "--trust-remote-code"
+                ] + extra_args
+            else:
+                if not thinking:
+                    extra_args.extend(["--chat-template-args", '{"enable_thinking":false}'])
+                if draft_model:
+                    extra_args.extend(["--draft-model", draft_model, "--num-draft-tokens", "3"])
+                cmd = [
+                    "uvx", "--from", "mlx-lm", "mlx_lm.server",
+                    "--model", model_path,
+                    "--host", str(host),
+                    "--port", str(port),
+                    "--temp", str(temp),
+                    "--max-tokens", str(max_tokens)
+                ] + extra_args
 
             safe_name = re.sub(r"[^a-zA-Z0-9_.-]", "_", model_name)
             log_file = os.path.join(LOG_DIR, f"{safe_name}_{port}.log")
-
-            cmd = [
-                "uvx", "--from", "mlx-lm", "mlx_lm.server",
-                "--model", model_path,
-                "--host", str(host),
-                "--port", str(port),
-                "--temp", str(temp),
-                "--max-tokens", str(max_tokens)
-            ] + extra_args
 
             env = mlx_helper.get_mlx_env()
 
@@ -275,14 +302,16 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                 pf.write(str(proc.pid))
 
             if st.get("auto_sync_agents", True):
-                mlx_helper.sync_pi_and_opencode(model_name, port=port)
+                mlx_helper.sync_pi_and_opencode(model_name, port=port, is_vision=is_vis)
 
             self.send_json({
                 "status": "ok",
-                "message": f"Started {model_name} on port {port}",
+                "message": f"Started {model_name} on port {port} ({use_engine})",
                 "pid": proc.pid,
                 "port": port,
-                "host": host
+                "host": host,
+                "engine": use_engine,
+                "is_vision": is_vis
             })
 
         elif path == "/api/stop":
@@ -508,21 +537,33 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
             model = payload.get("model", "default_model")
             port = payload.get("port", st.get("default_port", 9999))
             host = payload.get("host", "127.0.0.1")
+            image_data = payload.get("image", "")
 
             url = f"http://{host}:{port}/v1/chat/completions"
             test_model_name = "default_model"
             if model and "/" in model:
                 test_model_name = model
 
+            if image_data:
+                user_msg = {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data}}
+                    ]
+                }
+            else:
+                user_msg = {"role": "user", "content": prompt}
+
             req_data = json.dumps({
                 "model": test_model_name,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 300
+                "messages": [user_msg],
+                "max_tokens": 512
             }).encode("utf-8")
 
             req = urllib.request.Request(url, data=req_data, headers={"Content-Type": "application/json"})
             try:
-                with urllib.request.urlopen(req, timeout=90) as resp:
+                with urllib.request.urlopen(req, timeout=120) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
                     msg = res_data.get("choices", [{}])[0].get("message", {})
                     content = msg.get("content", "")
@@ -561,7 +602,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>macOS MLX Control Center v0.3</title>
+  <title>macOS MLX Control Center v0.4 (Vision & Text)</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1002,9 +1043,9 @@ INDEX_HTML = """<!DOCTYPE html>
       <div>
         <div class="brand-title" style="display: flex; align-items: center; gap: 8px;">
           macOS MLX Control Center
-          <span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(99, 102, 241, 0.25); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); font-weight: 600; letter-spacing: 0.5px;">v0.3</span>
+          <span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(99, 102, 241, 0.25); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.4); font-weight: 600; letter-spacing: 0.5px;">v0.4 (Vision & Text)</span>
         </div>
-        <div style="font-size: 12px; color: var(--text-muted);">Apple Silicon Local Model Manager</div>
+        <div style="font-size: 12px; color: var(--text-muted);">Apple Silicon Local Multimodal & LLM Powerstation</div>
       </div>
     </div>
     <div style="display: flex; align-items: center; gap: 12px;">
@@ -1123,6 +1164,7 @@ INDEX_HTML = """<!DOCTYPE html>
     <!-- FILTER & SORT BAR -->
     <div class="filter-bar">
       <div class="chip active" id="filter-mlx" onclick="setFilter('mlx')">⚡ MLX Models (Default)</div>
+      <div class="chip" id="filter-vision" onclick="setFilter('vision')">👁️ Vision & Multimodal</div>
       <div class="chip" id="filter-4bit" onclick="setFilter('4bit')">🎯 4-Bit Quantized</div>
       <div class="chip" id="filter-code" onclick="setFilter('code')">💻 Code Models</div>
       <div class="chip" id="filter-all" onclick="setFilter('all')">🌐 All HF Repos</div>
@@ -1153,10 +1195,10 @@ INDEX_HTML = """<!DOCTYPE html>
     <div id="searchResultsGrid" class="grid"></div>
   </div>
 
-  <!-- TAB 4: API & CHAT TEST -->
+  <!-- TAB 4: API & CHAT TEST (WITH VISION & IMAGE SUPPORT) -->
   <div id="tab-test" class="tab-content">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-      <h2 style="font-size: 18px; font-weight: 600;">Test Active MLX Model Server</h2>
+      <h2 style="font-size: 18px; font-weight: 600;">Test Active MLX Model Server (Text & Vision)</h2>
       <button class="btn btn-secondary" onclick="loadTestServers()">🔄 Refresh Server List</button>
     </div>
     <div class="chat-box">
@@ -1166,6 +1208,34 @@ INDEX_HTML = """<!DOCTYPE html>
         </label>
         <select id="testServerSelect" style="width: 100%; font-weight: 500;"></select>
       </div>
+
+      <!-- IMAGE ATTACHMENT FOR VISION TESTING -->
+      <div style="background: rgba(0,0,0,0.25); border: 1px dashed rgba(99, 102, 241, 0.4); border-radius: 10px; padding: 14px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div style="font-size: 13px; font-weight: 600; color: #a5b4fc; display: flex; align-items: center; gap: 6px;">
+            👁️ Image / Vision Attachment (Optional for Multimodal Models)
+          </div>
+          <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick="document.getElementById('testImageFile').click()">📁 Choose Image</button>
+        </div>
+        <input type="file" id="testImageFile" accept="image/*" onchange="handleImageSelected(this)" style="display: none;">
+        
+        <div id="testImagePreviewRow" style="display: none; align-items: center; gap: 14px; margin-top: 10px;">
+          <img id="testImagePreview" style="max-height: 90px; max-width: 140px; border-radius: 6px; border: 1px solid var(--accent); object-fit: cover;">
+          <div>
+            <div id="testImageName" style="font-size: 12px; font-weight: 600; color: #f3f4f6;">image.png</div>
+            <div id="testImageSize" style="font-size: 11px; color: var(--text-muted);">0 KB</div>
+            <button class="btn btn-danger" style="padding: 3px 8px; font-size: 11px; margin-top: 6px;" onclick="removeTestImage()">✕ Remove Image</button>
+          </div>
+        </div>
+
+        <div id="testImagePromptShortcuts" style="display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;">
+          <span style="font-size: 11px; color: var(--text-muted); align-self: center;">Quick Prompts:</span>
+          <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="setPrompt('Describe what you see in this image in detail.')">🖼️ Describe Image</button>
+          <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="setPrompt('Extract and transcribe all text from this image (OCR).')">🔍 OCR Text</button>
+          <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;" onclick="setPrompt('Explain the code and diagram shown in this screenshot.')">💻 Explain Screenshot</button>
+        </div>
+      </div>
+
       <div style="margin-bottom: 16px;">
         <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--text-muted);">
           Test Prompt:
@@ -1443,18 +1513,34 @@ INDEX_HTML = """<!DOCTYPE html>
       <!-- PRESET PROFILES BAR -->
       <div style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #fff;">1-Click Preset Profiles:</div>
       <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+        <div class="preset-btn" onclick="applyPreset('vision')">
+          <div style="font-weight:600; font-size:12px; color:#a855f7;">👁️ Vision / Multimodal</div>
+          <div style="font-size:11px; color:var(--text-muted);">mlx-vlm | Image & Text</div>
+        </div>
         <div class="preset-btn" onclick="applyPreset('code')">
           <div style="font-weight:600; font-size:12px; color:#60a5fa;">💻 Coding Agent</div>
           <div style="font-size:11px; color:var(--text-muted);">Temp 0.0 | Max 8192</div>
         </div>
         <div class="preset-btn" onclick="applyPreset('reason')">
-          <div style="font-weight:600; font-size:12px; color:#a855f7;">🧠 Deep Reasoning</div>
+          <div style="font-weight:600; font-size:12px; color:#f59e0b;">🧠 Deep Reasoning</div>
           <div style="font-size:11px; color:var(--text-muted);">Temp 0.6 | Thinking ON</div>
         </div>
         <div class="preset-btn" onclick="applyPreset('fast')">
           <div style="font-weight:600; font-size:12px; color:#34d399;">⚡ Fast Chat</div>
           <div style="font-size:11px; color:var(--text-muted);">Temp 0.7 | Thinking OFF</div>
         </div>
+      </div>
+
+      <!-- INFERENCE ENGINE SELECTION -->
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-muted);">
+          Inference Server Engine:
+        </label>
+        <select id="launchEngineSelect" style="width: 100%;">
+          <option value="auto">⚡ Auto-Detect Engine (Uses mlx-vlm for Vision, mlx-lm for Text)</option>
+          <option value="mlx-vlm">👁️ mlx-vlm (Vision & Multimodal Model Engine)</option>
+          <option value="mlx-lm">🤖 mlx-lm (Standard Text LLM Engine)</option>
+        </select>
       </div>
 
       <div style="margin-bottom: 16px; font-size: 13px; color: var(--text-muted);">
@@ -1931,14 +2017,22 @@ INDEX_HTML = """<!DOCTYPE html>
           serverContainer.innerHTML = '';
           activeServers.forEach(s => {
             const isReady = s.status === 'READY';
+            const isVisEngine = s.engine === 'mlx-vlm' || s.is_vision;
+            const engineBadge = isVisEngine 
+              ? `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(168, 85, 247, 0.25); color: #d8b4fe; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 600;">👁️ mlx-vlm (Vision)</span>`
+              : `<span style="font-size: 11px; padding: 2px 8px; border-radius: 6px; background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.3); font-weight: 600;">⚡ mlx-lm (Text)</span>`;
+
             serverContainer.innerHTML += `
               <div class="card">
                 <div class="card-main">
                   <div class="card-header-row">
                     <div class="card-title">${s.model}</div>
-                    <span class="status-pill ${isReady ? 'ready' : 'none'}">
-                      <span class="status-dot ${isReady ? '' : 'pulse'}"></span> ${s.status}
-                    </span>
+                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                      ${engineBadge}
+                      <span class="status-pill ${isReady ? 'ready' : 'none'}">
+                        <span class="status-dot ${isReady ? '' : 'pulse'}"></span> ${s.status}
+                      </span>
+                    </div>
                   </div>
                   <div class="card-meta">
                     <span>Port: <strong style="color: #f3f4f6;">${s.port}</strong></span>
@@ -1990,7 +2084,8 @@ INDEX_HTML = """<!DOCTYPE html>
           opt.value = s.port;
           opt.setAttribute('data-model', s.model);
           opt.setAttribute('data-host', s.host || '127.0.0.1');
-          opt.innerText = `[Port ${s.port}] ${s.model} (${s.status})`;
+          const engTag = (s.engine === 'mlx-vlm' || s.is_vision) ? '👁️ Vision' : '⚡ Text';
+          opt.innerText = `[Port ${s.port} - ${engTag}] ${s.model} (${s.status})`;
           if (String(s.port) === String(currentVal)) {
             opt.selected = true;
           }
@@ -2033,8 +2128,9 @@ INDEX_HTML = """<!DOCTYPE html>
         const isRunning = activeServers.some(s => s.model === m.name);
         const runningServer = activeServers.find(s => s.model === m.name);
 
-        let badgeColor = m.supported ? '#6366f1' : '#f59e0b';
+        let badgeColor = m.is_vision ? '#a855f7' : (m.supported ? '#6366f1' : '#f59e0b');
         const tagBadge = m.arch_tag ? `<span style="font-size:11px; padding: 2px 8px; border-radius: 12px; background: rgba(255,255,255,0.08); color: ${badgeColor}; margin-left: 6px;">${m.arch_tag}</span>` : '';
+        const visionBadge = m.is_vision ? `<span class="ram-badge fit" style="background: rgba(168, 85, 247, 0.2); color: #d8b4fe; border-color: rgba(168, 85, 247, 0.4);">👁️ Vision Ready</span>` : '';
         const ramBadge = getRamBadge(m.size_gb || 6.0, currentFreeRam);
         const isChecked = selectedForCompare.has(m.name) ? 'checked' : '';
         const hfUrl = m.base_name ? `https://huggingface.co/${m.base_name}${m.subfolder ? '/tree/main/' + m.subfolder : ''}` : `https://huggingface.co/${m.name}`;
@@ -2044,7 +2140,10 @@ INDEX_HTML = """<!DOCTYPE html>
             <div class="card-main">
               <div class="card-header-row">
                 <div class="card-title">${m.name} ${tagBadge}</div>
-                ${ramBadge}
+                <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                  ${visionBadge}
+                  ${ramBadge}
+                </div>
                 <label class="compare-label" style="font-size: 11px; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
                   <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
                 </label>
@@ -2068,7 +2167,10 @@ INDEX_HTML = """<!DOCTYPE html>
             <div class="card-main">
               <div class="card-header-row">
                 <div class="card-title">${m.name} ${tagBadge}</div>
-                ${ramBadge}
+                <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">
+                  ${visionBadge}
+                  ${ramBadge}
+                </div>
                 <label class="compare-label" style="font-size: 11px; cursor: pointer; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;">
                   <input type="checkbox" class="compare-check" ${isChecked} onchange="toggleCompareSelection('${m.name}')"> Compare
                 </label>
@@ -2216,7 +2318,12 @@ INDEX_HTML = """<!DOCTYPE html>
       document.querySelector('input[name="launchStrategy"][value="custom"]').checked = true;
       toggleCustomFields(true);
 
-      if (type === 'code') {
+      if (type === 'vision') {
+        document.getElementById('launchEngineSelect').value = 'mlx-vlm';
+        document.getElementById('customTemp').value = '0.0';
+        document.getElementById('customMaxTokens').value = '4096';
+        document.getElementById('customThinking').checked = true;
+      } else if (type === 'code') {
         document.getElementById('customTemp').value = '0.0';
         document.getElementById('customMaxTokens').value = '8192';
         document.getElementById('customThinking').checked = true;
@@ -2234,6 +2341,17 @@ INDEX_HTML = """<!DOCTYPE html>
     function openLaunchModal(modelName) {
       targetModelForLaunch = modelName;
       document.getElementById('modalModelTitle').innerText = `Start '${modelName}'`;
+      
+      const targetModelObj = cachedDownloadedModels.find(m => m.name === modelName || m.base_name === modelName);
+      const engineSelect = document.getElementById('launchEngineSelect');
+      if (engineSelect) {
+        if (targetModelObj && targetModelObj.is_vision) {
+          engineSelect.value = 'mlx-vlm';
+        } else {
+          engineSelect.value = 'auto';
+        }
+      }
+      
       document.getElementById('launchModal').classList.add('active');
     }
 
@@ -2247,9 +2365,10 @@ INDEX_HTML = """<!DOCTYPE html>
 
     async function confirmLaunch() {
       const strategy = document.querySelector('input[name="launchStrategy"]:checked').value;
+      const engine = document.getElementById('launchEngineSelect') ? document.getElementById('launchEngineSelect').value : 'auto';
       closeLaunchModal();
 
-      let payload = { model: targetModelForLaunch, mode: strategy };
+      let payload = { model: targetModelForLaunch, mode: strategy, engine: engine };
 
       if (strategy === 'custom') {
         payload.port = parseInt(document.getElementById('customPort').value) || globalConfig.default_port || 9999;
@@ -2258,7 +2377,7 @@ INDEX_HTML = """<!DOCTYPE html>
         payload.thinking = document.getElementById('customThinking').checked;
       }
 
-      alert(`Launching ${targetModelForLaunch}...`);
+      alert(`Launching ${targetModelForLaunch} with ${engine.toUpperCase()} engine...`);
 
       await fetch('/api/start', {
         method: 'POST',
@@ -2267,6 +2386,75 @@ INDEX_HTML = """<!DOCTYPE html>
       });
 
       setTimeout(() => { updateStatus(); loadModels(); }, 2000);
+    }
+
+    let attachedTestImageBase64 = '';
+
+    function handleImageSelected(input) {
+      if (input.files && input.files[0]) {
+        const file = input.files[0];
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          attachedTestImageBase64 = e.target.result;
+          document.getElementById('testImagePreview').src = attachedTestImageBase64;
+          document.getElementById('testImageName').innerText = file.name;
+          document.getElementById('testImageSize').innerText = Math.round(file.size / 1024) + ' KB';
+          document.getElementById('testImagePreviewRow').style.display = 'flex';
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+
+    function removeTestImage() {
+      attachedTestImageBase64 = '';
+      const fileInput = document.getElementById('testImageFile');
+      if (fileInput) fileInput.value = '';
+      const previewRow = document.getElementById('testImagePreviewRow');
+      if (previewRow) previewRow.style.display = 'none';
+    }
+
+    function setPrompt(text) {
+      const promptInput = document.getElementById('promptInput');
+      if (promptInput) promptInput.value = text;
+    }
+
+    async function sendTestPrompt() {
+      const prompt = document.getElementById('promptInput').value;
+      const select = document.getElementById('testServerSelect');
+      if (!select || !select.value) {
+        alert("Please select a running MLX model server from the dropdown to test.");
+        return;
+      }
+      const port = parseInt(select.value);
+      const selectedOption = select.options[select.selectedIndex];
+      const model = selectedOption ? selectedOption.getAttribute('data-model') : '';
+      const host = selectedOption ? selectedOption.getAttribute('data-host') : '127.0.0.1';
+
+      const chatOutput = document.getElementById('chatOutput');
+      const hasImage = !!attachedTestImageBase64;
+      chatOutput.innerText = `⏳ Sending ${hasImage ? 'multimodal image + text' : 'text'} query to '${model}' on port ${port}... (Generating thinking & response tokens)`;
+
+      try {
+        const res = await fetch('/api/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            prompt: prompt, 
+            model: model, 
+            port: port, 
+            host: host,
+            image: attachedTestImageBase64 
+          })
+        });
+        const data = await res.json();
+        if (data.response) {
+          chatOutput.innerText = `[Model: ${model} | Port: ${port}${hasImage ? ' | Multimodal Vision 👁️' : ''}]\n\n` + data.response;
+        } else {
+          chatOutput.innerText = "Error: " + (data.error || "No response");
+        }
+      } catch (e) {
+        chatOutput.innerText = "Error requesting server: " + e;
+      }
     }
 
     async function runBenchmark() {
@@ -2436,38 +2624,6 @@ INDEX_HTML = """<!DOCTYPE html>
           body: JSON.stringify({ delete_target: deleteTarget })
         });
         loadModels();
-      }
-    }
-
-    async function sendTestPrompt() {
-      const prompt = document.getElementById('promptInput').value;
-      const select = document.getElementById('testServerSelect');
-      if (!select || !select.value) {
-        alert("Please select a running MLX model server from the dropdown to test.");
-        return;
-      }
-      const port = parseInt(select.value);
-      const selectedOption = select.options[select.selectedIndex];
-      const model = selectedOption ? selectedOption.getAttribute('data-model') : '';
-      const host = selectedOption ? selectedOption.getAttribute('data-host') : '127.0.0.1';
-
-      const chatOutput = document.getElementById('chatOutput');
-      chatOutput.innerText = `⏳ Sending query to '${model}' on port ${port}... (Generating thinking & response tokens)`;
-
-      try {
-        const res = await fetch('/api/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: prompt, model: model, port: port, host: host })
-        });
-        const data = await res.json();
-        if (data.response) {
-          chatOutput.innerText = `[Model: ${model} | Port: ${port}]\n\n` + data.response;
-        } else {
-          chatOutput.innerText = "Error: " + (data.error || "No response");
-        }
-      } catch (e) {
-        chatOutput.innerText = "Error requesting server: " + e;
       }
     }
 
