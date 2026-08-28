@@ -31,6 +31,50 @@ def save_global_settings(settings):
     except Exception:
         pass
 
+def get_mlx_env():
+    """Builds environment with full PATH resolution for Apple Silicon and standard macOS binaries."""
+    env = os.environ.copy()
+    paths = [
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.cargo/bin"),
+        os.path.expanduser("~/bin"),
+        env.get("PATH", "")
+    ]
+    env["PATH"] = ":".join([p for p in paths if p])
+    env["PYTHONUNBUFFERED"] = "1"
+    env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+    env["HF_XET_HIGH_PERFORMANCE"] = "1"
+    return env
+
+def get_download_cmd(repo_id, subfolder="", revision=""):
+    """Finds available Hugging Face download CLI tool (hf, huggingface-cli, or uvx fallback)."""
+    import shutil
+    hf_path = shutil.which("hf")
+    if not hf_path:
+        for p in [os.path.expanduser("~/.local/bin/hf"), "/opt/homebrew/bin/hf", "/usr/local/bin/hf", os.path.expanduser("~/.cargo/bin/hf")]:
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                hf_path = p
+                break
+
+    if hf_path:
+        cmd = [hf_path, "download", repo_id]
+    elif shutil.which("huggingface-cli") or os.path.isfile(os.path.expanduser("~/.local/bin/huggingface-cli")):
+        cmd = ["huggingface-cli", "download", repo_id]
+    elif shutil.which("uvx") or os.path.isfile(os.path.expanduser("~/.local/bin/uvx")):
+        uvx_bin = shutil.which("uvx") or os.path.expanduser("~/.local/bin/uvx")
+        cmd = [uvx_bin, "--from", "huggingface_hub[hf_transfer]", "hf", "download", repo_id]
+    else:
+        cmd = ["hf", "download", repo_id]
+
+    if subfolder:
+        cmd.extend(["--include", f"{subfolder}/*"])
+    if revision and revision != "main":
+        cmd.extend(["--revision", revision])
+    return cmd
+
 def parse_hf_identifier(input_str, explicit_subfolder=""):
     """Parses any Hugging Face URL, repo ID with subfolder, or raw path into structured components."""
     s = (input_str or "").strip()

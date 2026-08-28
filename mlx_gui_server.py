@@ -265,8 +265,7 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                 "--max-tokens", str(max_tokens)
             ] + extra_args
 
-            env = os.environ.copy()
-            env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{os.path.expanduser('~/bin')}:{env.get('PATH', '')}"
+            env = mlx_helper.get_mlx_env()
 
             with open(log_file, "a") as lf:
                 proc = subprocess.Popen(cmd, stdout=lf, stderr=lf, env=env)
@@ -437,17 +436,8 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                     del paused[repo_id]
                     mlx_helper.save_paused_downloads(paused)
 
-                env = os.environ.copy()
-                env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{os.path.expanduser('~/bin')}:{env.get('PATH', '')}"
-                env["PYTHONUNBUFFERED"] = "1"
-                env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-                env["HF_XET_HIGH_PERFORMANCE"] = "1"
-
-                cmd = ["hf", "download", repo_id]
-                if subfolder:
-                    cmd.extend(["--include", f"{subfolder}/*"])
-                if revision and revision != "main":
-                    cmd.extend(["--revision", revision])
+                env = mlx_helper.get_mlx_env()
+                cmd = mlx_helper.get_download_cmd(repo_id, subfolder=subfolder, revision=revision)
 
                 proc = subprocess.Popen(cmd, env=env)
                 self.send_json({
@@ -491,17 +481,8 @@ class MLXGuiHandler(BaseHTTPRequestHandler):
                 del paused[repo_id]
                 mlx_helper.save_paused_downloads(paused)
 
-            env = os.environ.copy()
-            env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{os.path.expanduser('~/bin')}:{env.get('PATH', '')}"
-            env["PYTHONUNBUFFERED"] = "1"
-            env["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-            env["HF_XET_HIGH_PERFORMANCE"] = "1"
-
-            cmd = ["hf", "download", repo_id]
-            if subfolder:
-                cmd.extend(["--include", f"{subfolder}/*"])
-            if revision and revision != "main":
-                cmd.extend(["--revision", revision])
+            env = mlx_helper.get_mlx_env()
+            cmd = mlx_helper.get_download_cmd(repo_id, subfolder=subfolder, revision=revision)
 
             proc = subprocess.Popen(cmd, env=env)
             self.send_json({
